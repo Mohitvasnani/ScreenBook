@@ -82,6 +82,14 @@
 
 
 
+/* Demo is the quiet one: outlined rather than filled, so it reads as a label
+   and not as a claim. Without a rule of its own it inherited nothing and
+   rendered as bare text next to a carefully styled wordmark. */
+.badgeDemo {
+  border: 1px solid var(--color-line-strong);
+  color: var(--color-n700);
+}
+
 /* Live is the loud one: solid ivory, because it means the seats are shared. */
 .badgeLive {
   background: var(--color-ink);
@@ -121,3 +129,62 @@
   color: var(--color-ink);
   border-bottom: 2px solid var(--color-ink);
 }
+/* The auth cluster sits after .nav, which has margin-left: auto, so it rides
+   the right edge. .bar already wraps, so on a narrow screen this drops to a
+   second line rather than crushing the nav. */
+   .account {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 14px;
+    /* Roughly the width of the signed-out state, reserved so the nav does not
+       jump leftward when the startup check lands. The signed-in name is wider
+       and will still shift a little, which is the cheaper of the two problems:
+       the alternative is rendering a guess about who you are. */
+    min-width: 72px;
+    justify-content: flex-end;
+  }
+  
+  .accountName {
+    color: var(--color-ink);
+    text-decoration: none;
+    font-weight: 500;
+    /* A long display name should not push the nav off a phone screen. */
+    max-width: 14ch;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  
+  .accountName:hover {
+    text-decoration: underline;
+  }
+  
+  .signIn {
+    color: var(--color-accent-deep);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  
+  .signIn:hover {
+    text-decoration: underline;
+  }
+  
+  .logOut {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-n700);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  
+  .logOut:hover:enabled {
+    color: var(--color-ink);
+    text-decoration: underline;
+  }
+  
+  .logOut:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }

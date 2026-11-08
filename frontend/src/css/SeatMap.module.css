@@ -179,3 +179,83 @@
 .zoom .gap {
   flex: 0 0 var(--seat-size);
 }
+
+/* ----------------------------------------------------------------- minimap */
+
+/* Only rendered in zoom, and only when the stage actually overflows. Sits
+   under the toolbar so it appears exactly where the Zoom button was pressed,
+   which is what explains the new scrollable state. */
+.minimap {
+  position: relative;
+  margin-bottom: 12px;
+  padding: 7px 8px;
+  border: 1px solid var(--color-n400);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: grab;
+  /* Without this a drag across the minimap scrolls the page instead of
+     panning the map. */
+  touch-action: none;
+}
+
+.minimap:active {
+  cursor: grabbing;
+}
+
+.miniRows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.miniRow {
+  display: flex;
+  gap: 5px; /* the walking aisles, so the room is recognisable at this size */
+}
+
+.miniBlock {
+  display: flex;
+  flex: 1;
+  gap: 1px;
+}
+
+.miniFree,
+.miniTaken,
+.miniYours,
+.miniGap {
+  flex: 1;
+  height: 4px;
+  border-radius: 1px;
+}
+
+/* Tier tint, so the three bands are still readable and the minimap matches
+   the cross-aisle labels below it. */
+.miniFree {
+  background: color-mix(in srgb, var(--mini-tint) 55%, transparent);
+}
+
+.miniTaken {
+  background: var(--seat-booked);
+}
+
+/* Same solid ivory as a selected seat, so your own seats are findable in the
+   overview by exactly the cue they use in the map. */
+.miniYours {
+  background: var(--color-ink);
+}
+
+.miniGap {
+  background: none;
+}
+
+/* The part of the map currently on screen. Accent, because it is the only
+   thing here that is about you rather than about the room. */
+.miniViewport {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border: 1.5px solid var(--color-accent);
+  border-radius: 5px;
+  background: var(--color-accent-tint);
+  pointer-events: none;
+}

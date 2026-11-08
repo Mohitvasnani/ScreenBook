@@ -1,0 +1,110 @@
+/* Shared by LoginScreen and SignupScreen. One module rather than two, because
+   they are the same layout with a different number of fields, and two copies
+   would drift on the first change to either. */
+
+   .page {
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 48px 16px 64px;
+  }
+  
+  .title {
+    font-size: 32px;
+  }
+  
+  .lede {
+    margin-top: 12px;
+    color: var(--color-n700);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  
+  .form {
+    margin-top: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  
+  .label {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-n700);
+  }
+  
+  .input {
+    padding: 11px 13px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font: inherit;
+  }
+  
+  .input:disabled {
+    opacity: 0.55;
+  }
+  
+  /* Applied only after the server has rejected this field, never from the
+     browser's own :invalid, which fires while someone is still halfway through
+     typing their address and turns the form red at them as they go. */
+  .inputRejected {
+    border-color: var(--color-critical);
+  }
+  
+  .hint {
+    font-size: 13px;
+    color: var(--color-n500);
+  }
+  
+  .fieldError {
+    font-size: 13px;
+    color: var(--color-critical);
+  }
+  
+  .formError {
+    padding: 11px 13px;
+    border: 1px solid var(--color-critical);
+    border-radius: var(--radius);
+    background: var(--color-critical-tint);
+    font-size: 14px;
+  }
+  
+  .submit {
+    margin-top: 4px;
+    padding: 12px 20px;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--color-accent-deep);
+    font-size: 15px;
+    cursor: pointer;
+  }
+  
+  .submit:hover:enabled {
+    background: var(--color-accent-tint);
+  }
+  
+  .submit:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  
+  .alt {
+    margin-top: 24px;
+    font-size: 14px;
+    color: var(--color-n700);
+  }
+  
+  .secondary {
+    display: inline-block;
+    margin-top: 20px;
+    font-size: 14px;
+  }

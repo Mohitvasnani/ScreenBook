@@ -9,12 +9,19 @@ construction rather than by discovery.
 - All money in integer minor units (pence), never floats
 - Errors use RFC 9457 problem details (`application/problem+json`)
 - Hold TTL: 300 seconds
-- Up to 6 seats per hold, claimed all or nothing
+- Up to 3 seats per hold as a guest, 6 signed in, claimed all or nothing
 - `Idempotency-Key` honoured on `POST /api/bookings`, so a retry returns the
   original booking rather than a conflict
+- Accounts are optional. Every booking endpoint works signed in or not, which
+  is what guest checkout means
+- Sessions are httpOnly cookies, never an `Authorization` header and never a
+  token in a response body
+- Unsafe requests to `/api/auth/refresh`, `/api/auth/logout` and `/api/me/**`
+  carry a CSRF token
 
-Seven endpoints. Four are the core booking flow. Two are `GET`s that exist so the
-client's URLs survive a page refresh. One releases a hold early.
+Thirteen endpoints. Seven are the booking flow: four doing the work, two `GET`s
+that exist so the client's URLs survive a page refresh, one releasing a hold
+early. The other six are accounts, added in wave 3.
 
 ---
 
@@ -139,9 +146,14 @@ Claim one to six seats for 300 seconds, all or nothing.
 { "showtimeId": 1, "seatIds": [1002, 1003] }
 ```
 
-`seatIds` carries 1 to 6 entries, in the order the customer picked them, with no
-seat repeated. The cap is enforced by the server, not just the UI: a cap that
-only exists in the client is not a cap.
+`seatIds` carries 1 to 3 entries as a guest and 1 to 6 signed in, in the order
+the customer picked them, with no seat repeated. The cap is enforced by the
+server, not just the UI: a cap that only exists in the client is not a cap.
+
+The higher cap is the one concrete benefit of an account, and it is deliberately
+a modest one. A guest is anonymous, so six seats held by a guest is six seats
+anyone can tie up leaving nothing behind; an account at least attaches the
+behaviour to something.
 
 A repeated seat is a client bug, not a conflict, so `[5, 5, 7]` is rejected
 rather than quietly collapsed to `[5, 7]`. Deduping would hide the bug in
@@ -282,12 +294,23 @@ Convert a hold into a booking.
 **Request**
 
 ```json
-{ "holdId": "0199c3a4-7f21-7b8e-9d44-1a2b3c4d5e6f" }
+{
+  "holdId": "0199c3a4-7f21-7b8e-9d44-1a2b3c4d5e6f",
+  "email": "mo@example.com"
+}
 ```
 
-The body carries only the hold ID. The hold already knows its seats and its
-showtime, so re-sending them would let a client submit a combination that
-disagrees with the server, and the server would have to decide which to trust.
+`holdId` is the only thing identifying what is being booked. The hold already
+knows its seats and its showtime, so re-sending them would let a client submit
+a combination that disagrees with the server, and the server would have to
+decide which to trust.
+
+`email` is optional and exists for guests, who otherwise have nothing but the
+reference. It is stored so a confirmation can be sent and is never used to
+decide who a booking belongs to, for the reason in section 13. A signed-in
+booking is found by its account instead, and the account comes from the session
+cookie rather than the body, because a client-supplied user id is a
+client-supplied claim about who it is.
 
 **201**
 
@@ -330,12 +353,19 @@ that never saw the first response actually needs.
 | Same key, same body, first attempt finished | The original **201** and the same booking |
 | Same key, same body, first attempt still running | **409** `problems/idempotency-key-in-progress` |
 | Same key, different body | **422** `problems/idempotency-key-reused` |
+| Same key, same hold, different account | **422** `problems/idempotency-key-reused` |
 
 The key is claimed before the booking is attempted, not after. Recording it
 afterwards means two concurrent retries both do the work; the primary key on the
 claim is what serialises them. That is also why there is an in-progress case: a
 retry arriving while the first attempt is mid-flight has no honest answer yet,
 so it is told to ask again rather than given a guess.
+
+"Same body" means the same `holdId`, the same account and the same email, which
+is what the stored request hash covers. Hashing the hold alone would let the
+same key sent with a different account take the replay path and hand back a
+booking attributed to someone else, which is precisely the mistake reuse
+detection exists to catch.
 
 No response body is stored. A booking never changes, so re-reading it by
 reference reproduces the original response exactly. A general idempotency layer
@@ -383,6 +413,229 @@ between a hold that models intent and one that just models a timeout.
 
 ---
 
+## 8. `POST /api/auth/signup`
+
+Create an account. Signing up signs you in, because redirecting to a login form
+you have just proved you can pass is friction for nothing.
+
+**Request**
+
+```json
+{
+  "email": "mo@example.com",
+  "password": "correct horse battery",
+  "displayName": "Mo"
+}
+```
+
+`password` is 8 to 72 characters with no composition rules, no required symbol
+or digit. Current NIST guidance is that those push people toward `Password1!`
+and away from length, which is the thing that actually matters.
+
+The 72 is not arbitrary. BCrypt ignores everything past 72 bytes, so a longer
+password would have a silent dead tail and two passwords sharing a 72-byte
+prefix would both unlock the account. Rejecting is honest; truncating is not.
+
+**201**, with `Set-Cookie` for `sb_access` and `sb_refresh`
+
+```json
+{
+  "id": "0199c3a4-7f21-7b8e-9d44-1a2b3c4d5e6f",
+  "email": "mo@example.com",
+  "displayName": "Mo",
+  "createdAt": "2026-11-06T11:04:22Z"
+}
+```
+
+No token in the body, here or anywhere else. A token the page can read is a
+token an XSS bug can read. The body says who you are, the cookies carry the
+credential.
+
+**409** `problems/email-taken`. 409 rather than 422: the request is well formed,
+the world disagrees with it.
+
+**422** `problems/validation-failed` for a malformed address, a password outside
+8 to 72, or a blank display name.
+
+Addresses are stored and compared lowercase, so the case someone happened to
+type at signup cannot lock them out later. `app_user.email` carries
+`CHECK (email = lower(email))`, which makes that a guarantee rather than a
+convention: any code path that forgets to normalise fails at the database
+instead of quietly creating a second account for the same person.
+
+---
+
+## 9. `POST /api/auth/login`
+
+**Request**
+
+```json
+{ "email": "mo@example.com", "password": "correct horse battery" }
+```
+
+No `@Email` and no `@Size` on this request, deliberately. Validating the shape
+of a submitted credential tells an attacker which guesses were worth checking,
+and a password that no longer meets today's rules must still be able to log in.
+
+**200**, same body and the same two cookies as signup.
+
+**401** `problems/invalid-credentials`.
+
+One answer for "no such account" and for "wrong password". Two distinguishable
+responses would let anyone confirm which addresses are registered by watching
+status codes. The unknown-email path also runs a BCrypt comparison against a
+dummy hash, so the two cases cannot be separated by timing either.
+
+---
+
+## 10. `POST /api/auth/refresh`
+
+Exchange the refresh cookie for a new pair. No request body; reads `sb_refresh`.
+
+**200**, same body as login, with both cookies replaced.
+
+The user is returned as well as the cookies, so a client that has just started
+up establishes who it is in one request rather than refreshing and then asking.
+
+**401** `problems/invalid-refresh-token` for a token that is expired, unknown,
+already spent, or absent. One answer for all four, so no case can be told from
+another.
+
+### Rotation and reuse detection
+
+Every refresh invalidates the token it was called with and issues a new one.
+Presenting a token that has already been spent means a copy exists somewhere it
+should not, so it is treated as a compromise and **every session for that user
+is revoked**, including the one the thief is holding.
+
+The consequence a client has to design around: two tabs refreshing at the same
+moment both present the same cookie, the second trips reuse detection, and the
+user is signed out everywhere. A client must funnel refreshes through a single
+in-flight request rather than letting each tab refresh independently.
+
+Tokens are stored as a SHA-256 hash, not BCrypt. The token is already
+high-entropy random, so there is nothing for a slow hash to protect. BCrypt's
+cost exists for low-entropy human passwords.
+
+---
+
+## 11. `POST /api/auth/logout`
+
+No body. Reads `sb_refresh`, revokes it, clears both cookies.
+
+**204** whether or not there was a session. Logging out when you are not logged
+in is not an error, the same way releasing a lapsed hold is not.
+
+---
+
+## 12. `GET /api/me`
+
+**200** the same body as signup. **401** with no valid session.
+
+The profile comes from the database, not from the token. The access token
+carries only `sub`, so a changed display name is correct immediately rather than
+fifteen minutes later when the token expires. A token is a credential, not a
+cache.
+
+---
+
+## 13. `GET /api/me/bookings`
+
+Every booking belonging to the signed-in account, newest first.
+
+**200** an array of the same objects as `GET /api/bookings/{reference}`, or an
+empty array for an account that has never booked. **401** with no valid session.
+
+**Matches on `user_id` only, never on email.** `booking.email` is whatever was
+typed at checkout and nobody has proved they own it, so matching on it would
+hand a stranger's booking history to anyone willing to sign up with their
+address.
+
+That is worth stating plainly because `V10__users.sql` says the opposite. Its
+comments describe `booking.email` as what "lets their old bookings surface if
+they sign up with the same address later", and it creates a `booking_by_email`
+index for exactly that. Both are right at different points: claiming guest
+bookings by address is a real feature, and it is only safe once the address is
+proven. There is no email verification yet, so this query matches on `user_id`
+until there is, and the index waits unused.
+
+Ordered by `booked_at DESC`, which is the order `booking_by_user (user_id,
+booked_at DESC)` is already in, so the sort costs nothing. The index is partial,
+`WHERE user_id IS NOT NULL`, and the query's `WHERE b.user_id = ?` implies that
+predicate, which is what keeps it usable.
+
+---
+
+## Sessions and cookies
+
+| Cookie | Path | Lifetime | Contents |
+|---|---|---|---|
+| `sb_access` | `/api` | 15 minutes | A JWT whose only claim is `sub` |
+| `sb_refresh` | `/api/auth` | 30 days | An opaque random token |
+| `XSRF-TOKEN` | `/` | session | The CSRF token, readable by the page |
+
+Both session cookies are `HttpOnly` and `SameSite=Lax`, and `Secure` everywhere
+except local plain http, where a `Secure` cookie is simply never set and login
+would fail with nothing useful in the log.
+
+`sb_refresh` is scoped to the one endpoint that consumes it. A refresh token
+sent with every seat map request is a refresh token exposed to every bug in
+every other handler; this one is only on the wire when it is being exchanged.
+
+The access token is short because it is never checked against the database.
+Revocation happens at refresh time, so fifteen minutes is the longest a revoked
+session stays alive. The refresh token is long because it is checked every time
+and can be deleted.
+
+Both sides are served from one origin: Next.js rewrites `/api/*` to this
+service, so the session cookie is first-party. Safari and Chrome both block
+third-party cookies, so a cookie set directly by the API's own hostname would be
+dropped on the frontend's page. That rewrite is also why CORS does not enter
+into the frontend's path at all.
+
+The token is read from the cookie by a custom `BearerTokenResolver` rather than
+from an `Authorization` header. Returning no token leaves the request anonymous,
+which is what makes guest checkout work: signature checking, expiry and the
+security context stay the framework's job instead of a hand-rolled filter.
+
+### CSRF
+
+`POST /api/auth/refresh`, `POST /api/auth/logout` and any unsafe method under
+`/api/me` require the `XSRF-TOKEN` cookie's value echoed back in an
+`X-XSRF-TOKEN` header. Safe methods never need it, so `GET /api/me/bookings`
+does not.
+
+The CSRF cookie is deliberately readable by JavaScript. That is not a weakness:
+a CSRF token is not a secret from the page, only from other origins, which the
+same-origin policy already enforces.
+
+The booking endpoints are exempt. They behave identically with or without a
+session, so there is nothing an attacker could forge that they could not simply
+do themselves, and leaving them open keeps Swagger UI and `curl` usable against
+a public demo API. `signup` and `login` are exempt because the credentials are
+in the body, so there is no ambient authority to forge; the residual risk is
+login CSRF, forcing a victim into the attacker's account, which is real but
+minor on a service holding nothing worth planting.
+
+---
+
+## Accounts and the booking flow
+
+Accounts change three things and nothing else.
+
+1. **The seat cap.** 3 seats per hold as a guest, 6 signed in.
+2. **Attribution.** A booking confirmed while signed in records `user_id` and
+   appears in section 13.
+3. **Nothing else.** Every endpoint in sections 1 to 7 behaves exactly as it did
+   without a session. Guest checkout is not a fallback path, it is the default
+   one.
+
+**Ownership is decided at confirm time, not when the hold is taken.** A guest
+can pick seats, sign in on the checkout screen, and the booking is theirs. Who
+you are when you commit is what matters, not who you were while browsing.
+
+---
+
 ## Identifier strategy
 
 | Resource | ID type | Why |
@@ -400,7 +653,14 @@ than gaps:
   duplicated hold costs the user nothing: the second request either returns a
   409 or claims seats that lapse in five minutes. A duplicated booking is a
   seat somebody paid for twice.
-- **Authentication.** There is no user model. Holds are bearer capabilities.
+- **Password reset.** Accounts can be created and signed into, but a forgotten
+  password cannot be recovered. It needs an email provider, which would be the
+  only third party this API depends on.
+- **Email verification.** Nothing proves an address belongs to whoever typed
+  it, which is why section 13 matches on `user_id` and `booking_by_email` goes
+  unused.
+- **Roles.** Every account is the same kind of account. There is no staff or
+  admin view, so there is no authorisation model, only authentication.
 - **Payment.** `pricePaidMinor` records the price at booking time; no money moves.
 - **Pagination** on showtimes.
 
@@ -418,3 +678,10 @@ more informative than either half on its own.
   pressure. That was wrong about where the pressure comes from: it is not load,
   it is one person on a bad connection pressing Confirm twice. Cheap to add and
   the failure it prevents is the worst one in the system.
+- **Authentication.** Out of scope through waves 1 and 2, on the grounds that a
+  hold id is already a bearer capability and accounts are orthogonal to the
+  concurrency problem. That reasoning held: nothing about the locking changed
+  when accounts arrived. What it missed is that "who booked this" is the first
+  question anyone asks of a booking system, and the answer being "nobody knows"
+  made the rest look unfinished. The concurrency story did not need it. The
+  artefact did.

@@ -4,8 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import styles from "@/css/SiteHeader.module.css";
-import { IS_MOCK } from "@/services/apiConfig";
+import { AUTH_ENABLED, IS_MOCK } from "@/services/apiConfig";
 
 /* Wordmark, mode badge and nav. Sticky, so the mode badge stays visible: on the
    seat map you are making a decision about money, and whether this is a demo or
@@ -16,6 +17,12 @@ import { IS_MOCK } from "@/services/apiConfig";
 export function SiteHeader() {
   const pathname = usePathname();
   const onRace = pathname.startsWith("/race");
+  /* No point offering a way in from the way in. Without this, signing in from
+     /login would set ?next=/login and land you back on the form. */
+  const onAuthPage = pathname === "/login" || pathname === "/signup";
+
+  const { user, ready, logOut } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
 
   const [scrolled, setScrolled] = useState(false);
 
@@ -28,6 +35,19 @@ export function SiteHeader() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await logOut();
+      /* No navigation here on purpose. Logging out of the showtimes list should
+         leave you on the showtimes list. Whether the current page is still
+         viewable is the route guard's question, not the header's, and it
+         answers it by watching the same user that just became null. */
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <header className={`${styles.header} ${scrolled ? styles.scrolled : ""}`}>
@@ -62,6 +82,40 @@ export function SiteHeader() {
             Race demo
           </Link>
         </nav>
+
+        {/* Nothing at all in mock mode: there is no session to be in, so a
+            Sign in link would lead to a screen explaining that it does not
+            work here. */}
+        {AUTH_ENABLED && (
+          <div className={styles.account}>
+            {/* Renders nothing until the startup check settles. Before it does,
+                user is null for everyone, so anything rendered here would be a
+                guess, and the guess shows "Sign in" to people who are already
+                signed in. An empty slot for one beat is the honest state. */}
+            {!ready ? null : user ? (
+              <>
+                <Link href="/account" className={styles.accountName}>
+                  {user.displayName}
+                </Link>
+                <button
+                  type="button"
+                  className={styles.logOut}
+                  onClick={signOut}
+                  disabled={signingOut}
+                >
+                  {signingOut ? "Signing out..." : "Log out"}
+                </button>
+              </>
+            ) : onAuthPage ? null : (
+              <Link
+                href={`/login?next=${encodeURIComponent(pathname)}`}
+                className={styles.signIn}
+              >
+                Sign in
+              </Link>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

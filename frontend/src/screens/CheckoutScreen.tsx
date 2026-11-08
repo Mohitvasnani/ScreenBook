@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { HoldCountdown } from "@/components/HoldCountdown";
 import styles from "@/css/CheckoutScreen.module.css";
 import { useApi } from "@/hooks/useApi";
@@ -14,18 +15,30 @@ import { dayAndTime, money, seatNames } from "@/utils/format";
 export function CheckoutScreen() {
   const router = useRouter();
   const holdId = String(useParams().holdId);
-  /* One key per hold, generated once and reused for every Confirm press on
-     this screen. That is the whole point: a retry has to carry the same key as
-     the attempt it is retrying, or the server sees two unrelated requests.
+  const { user } = useAuth();
 
-     Kept in a ref rather than state because it is not rendered, and keyed on
-     holdId so navigating to a different hold cannot inherit the old key. */
-  const keyRef = useRef<{ holdId: string; key: string } | null>(null);
-  if (keyRef.current?.holdId !== holdId) {
-    keyRef.current = { holdId, key: crypto.randomUUID() };
+  /* One key per set of inputs, reused for every Confirm press that sends the
+     same ones. A retry has to carry the same key as the attempt it is
+     retrying, or the server sees two unrelated requests.
+
+     Keyed on the email as well as the hold, because the server's request hash
+     covers holdId, account and email. Keep the old key after someone corrects
+     a typo and the hash no longer matches, so a legitimate second attempt
+     comes back as key reuse and the booking can never be completed. Minting a
+     new key when the inputs change is what keeps Confirm working.
+
+     A ref rather than state because it is never rendered, and read at submit
+     rather than during render so typing cannot churn it mid-flight. */
+  const keyRef = useRef<{ id: string; key: string } | null>(null);
+  function keyFor(address: string): string {
+    const id = `${holdId}|${address}`;
+    if (keyRef.current?.id !== id) {
+      keyRef.current = { id, key: crypto.randomUUID() };
+    }
+    return keyRef.current.key;
   }
-  const idempotencyKey = keyRef.current.key;
 
+  const [email, setEmail] = useState("");
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -51,11 +64,25 @@ export function CheckoutScreen() {
     setBusy(true);
     setProblem(null);
     try {
-      const booking = await api.createBooking(holdId, idempotencyKey);
+      /* Nothing sent when signed in. The booking is attributed by user_id and
+         the account already holds the address, so writing a copy onto the row
+         would be a second place for it to live and go stale. */
+      const address = user ? "" : email.trim().toLowerCase();
+
+      const booking = await api.createBooking(
+        holdId,
+        keyFor(address),
+        address || undefined,
+      );
       router.push(`/bookings/${booking.bookingReference}`);
     } catch (err) {
       if (err instanceof ApiError && err.is("hold-expired")) {
         setExpired(true);
+      } else if (err instanceof ApiError && err.is("idempotency-key-reused")) {
+        /* Should be unreachable, since keyFor mints a new key whenever the
+           inputs change. Named anyway: the generic message would send someone
+           into a retry loop that cannot succeed. */
+        setProblem("Something about this booking changed. Press Confirm again.");
       } else if (err instanceof ApiError && err.is("idempotency-key-in-progress")) {
         /* The previous press is still being processed. Not a failure, so this
            says so rather than suggesting something went wrong. */
@@ -159,6 +186,37 @@ export function CheckoutScreen() {
               </dd>
             </div>
           </dl>
+
+          {user ? (
+            <p className={styles.account}>
+              Booking as {user.displayName}. This will appear in your bookings
+              and the confirmation goes to {user.email}.
+            </p>
+          ) : (
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="email">
+                Email for your confirmation
+                <span className={styles.optional}>optional</span>
+              </label>
+              <input
+                id="email"
+                className={styles.input}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                maxLength={254}
+                placeholder="you@example.com"
+                disabled={busy}
+              />
+              <p className={styles.fieldHint}>
+                Leave it blank and your booking reference on the next screen is
+                the only record you get, so save it. An address here is not an
+                account: nobody has verified it, so it is never used to decide
+                who a booking belongs to.
+              </p>
+            </div>
+          )}
 
           {problem && <p className={styles.problem}>{problem}</p>}
 

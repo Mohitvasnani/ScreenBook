@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Archivo, Inter, JetBrains_Mono } from "next/font/google";
+import { AuthProvider } from "@/components/AuthProvider";
 import { ModeBanner } from "@/components/ModeBanner";
 import { MockProvider } from "@/components/MockProvider";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -37,14 +38,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${archivo.variable} ${inter.variable} ${jetbrains.variable}`}
     >
-            <body>
-                <MockProvider>
-          {/* Above the sticky header, so it scrolls away. Read once, not
-              permanently occupying the viewport on a 375px screen. */}
-          <ModeBanner />
-          <SiteHeader />
-          <main>{children}</main>
-          <SiteFooter />
+      <body>
+        <MockProvider>
+          {/* Inside MockProvider, so nothing that fetches mounts before the
+              worker is intercepting. Wraps the header too, which needs to
+              know who is signed in. */}
+          <AuthProvider>
+            {/* Above the sticky header, so it scrolls away. Read once, not
+                permanently occupying the viewport on a 375px screen. */}
+            <ModeBanner />
+            <SiteHeader />
+            <main>{children}</main>
+            <SiteFooter />
+          </AuthProvider>
         </MockProvider>
       </body>
     </html>

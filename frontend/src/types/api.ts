@@ -18,8 +18,8 @@
      seatsTotal: number;
    }
    
-     export type Tier = "NORMAL" | "PREMIUM" | "EXECUTIVE";
-
+   export type Tier = "NORMAL" | "PREMIUM" | "EXECUTIVE";
+   
    export interface Seat {
      id: number;
      rowLabel: string;
@@ -40,7 +40,7 @@
      seats: Seat[];
    }
    
-      export interface HeldSeat {
+   export interface HeldSeat {
      seatId: number;
      rowLabel: string;
      seatNumber: number;
@@ -53,8 +53,8 @@
    export interface Hold {
      holdId: string;
      showtimeId: number;
-     /* One to six seats, ordered by row then seat number. One hold covers all
-        of them: it expires whole and converts whole. */
+     /* Up to three seats as a guest and six signed in, ordered by row then seat
+        number. One hold covers all of them: it expires whole and converts whole. */
      seats: HeldSeat[];
      totalMinor: number;
      currency: string;
@@ -94,15 +94,19 @@
    
    export interface CreateHoldRequest {
      showtimeId: number;
-     /* 1 to 6, no repeats. A repeated seat is rejected rather than deduped. */
+     /* 1 to 3 as a guest, 1 to 6 signed in, no repeats. A repeated seat is
+        rejected rather than deduped. */
      seatIds: number[];
    }
    
    export interface CreateBookingRequest {
-     /* Only the hold id. The hold already knows its seats and showtime, so
-        sending them again would allow a combination that disagrees with the
-        server. */
+     /* The hold already knows its seats and showtime, so sending them again would
+        allow a combination that disagrees with the server. */
      holdId: string;
+     /* Optional, and for guests: it is how a confirmation reaches someone with no
+        account. Never used to decide who a booking belongs to. A signed-in
+        booking is attributed from the session cookie instead. */
+     email?: string;
    }
    
    /**
@@ -115,4 +119,26 @@
      rowLabel: string;
      seatNumber: number;
      status: SeatStatus;
+   }
+   
+   /* The signed-in account, as /api/me and every auth endpoint return it. No
+      token: the session is in cookies the page cannot read. */
+   export interface User {
+     id: string;
+     email: string;
+     displayName: string;
+     createdAt: string;
+   }
+   
+   export interface SignupRequest {
+     email: string;
+     /* 8 to 72 characters. The ceiling is BCrypt's, which ignores everything past
+        72 bytes, so a longer password would have a silent dead tail. */
+     password: string;
+     displayName: string;
+   }
+   
+   export interface LoginRequest {
+     email: string;
+     password: string;
    }

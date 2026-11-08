@@ -5,7 +5,7 @@
 
 import { delay, http, HttpResponse } from "msw";
 
-import { HOLD_TTL_SECONDS, MAX_SEATS_PER_HOLD } from "@/services/apiConfig";
+import { HOLD_TTL_SECONDS, MAX_SEATS_MEMBER } from "@/services/apiConfig";
 import { PROBLEM_BASE, type ProblemDetail } from "@/services/problemDetails";
 import type {
   HeldSeat,
@@ -33,6 +33,7 @@ import {
   SHOWTIMES,
   type SeatPosition,
 } from "./db";
+
 
 /* Enough latency that loading states are real rather than theoretical. */
 const LATENCY_MS = 180;
@@ -124,10 +125,10 @@ export const handlers = [
     if (!Array.isArray(seatIds) || seatIds.some((id) => typeof id !== "number")) {
       return invalid("/api/holds", "seatIds is required and must be an array of numbers.");
     }
-    if (seatIds.length < 1 || seatIds.length > MAX_SEATS_PER_HOLD) {
+    if (seatIds.length < 1 || seatIds.length > MAX_SEATS_MEMBER) {
       return invalid(
         "/api/holds",
-        `seatIds must contain between 1 and ${MAX_SEATS_PER_HOLD} seats.`,
+        `seatIds must contain between 1 and ${MAX_SEATS_MEMBER} seats.`,
       );
     }
     /* Rejected rather than deduped: a repeated seat is a client bug worth

@@ -150,7 +150,7 @@ that there is no lazy loading anywhere, so N+1 queries and
 
 ## API
 
-Seven endpoints. Full contract in
+Thirteen endpoints. Full contract in
 [docs/api-contract.md](docs/api-contract.md).
 
 | | |
@@ -162,6 +162,12 @@ Seven endpoints. Full contract in
 | `DELETE /api/holds/{id}` | release early |
 | `POST /api/bookings` | convert a hold into a booking |
 | `GET /api/bookings/{reference}` | read a booking by its `SB-` code |
+| `POST /api/auth/signup` | create an account, signed in on success |
+| `POST /api/auth/login` | exchange credentials for session cookies |
+| `POST /api/auth/refresh` | rotate the session, with reuse detection |
+| `POST /api/auth/logout` | revoke the session and clear the cookies |
+| `GET /api/me` | the signed-in account |
+| `GET /api/me/bookings` | that account's bookings, newest first |
 
 Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details
 with a distinct `type` URI per case, so clients branch on a stable identifier
@@ -228,15 +234,19 @@ suite on every push.
 
 Deferred with the reasoning recorded, so the omissions read as decisions.
 
-- **Authentication.** There is no user model. A hold id is a bearer capability.
+- **Password reset.** Accounts can be created and signed into, but a
+  forgotten password cannot be recovered yet. It needs an email provider,
+  which would be the only third party this service depends on.
+- **Email verification.** Nothing proves an address belongs to whoever typed
+  it, which is why my-bookings matches on `user_id` and never on email.
 - **Payment.** `pricePaidMinor` records the price at booking time. No money
   moves.
-- **GraphQL.** Seven fixed-shape resources with no over-fetching problem, and
+- **GraphQL.** Thirteen fixed-shape resources with no over-fetching problem, and
   an error model that depends on the HTTP status codes GraphQL discards.
 
 ## Reversed on purpose
 
-Two things were deferred and then built, and why is more informative than
+Three things were deferred and then built, and why is more informative than
 either half alone.
 
 - **Multi-seat holds**, deferred because the single-seat case already
@@ -246,9 +256,19 @@ either half alone.
 - **Idempotency keys**, deferred as mattering only under real retry pressure.
   That was wrong about where the pressure comes from. It is not load, it is one
   person on a bad connection pressing Confirm twice.
+- **Authentication**, deferred on the grounds that a hold id is already a
+  bearer capability and accounts are orthogonal to the concurrency problem.
+  That reasoning held: nothing about the locking changed when accounts
+  arrived. What it missed is that "who booked this" is the first question
+  anyone asks of a booking system, and the answer being "nobody knows" made
+  the rest look unfinished. The concurrency story did not need it. The
+  artefact did.
 
 ## Next
 
+- **Email verification**, which is what makes claiming a guest booking by its
+  address safe. The `booking_by_email` index already exists for it and goes
+  deliberately unused until an address can be proven.
 - **An exclusion constraint** on `hold_seat`, moving "at most one live hold per
   seat" from a locking convention into the schema, where no future code path
   can bypass it. `released_at` already exists for its predicate.
@@ -261,7 +281,7 @@ either half alone.
 
 | | |
 |---|---|
-| Backend | Java 21, Spring Boot 4.1.1, Hibernate 7, Gradle 9.7 |
+| Backend | Java 21, Spring Boot 4.1.1, Spring Security 7, Hibernate 7, Gradle 9.7 |
 | Database | PostgreSQL 18, Flyway 12, HikariCP |
 | Frontend | Next.js 16.4, React 19, TypeScript, CSS Modules, MSW |
 | Testing | JUnit 5, Testcontainers |

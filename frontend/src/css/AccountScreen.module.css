@@ -1,0 +1,176 @@
+/* Shared by the account screens and by RequireAuth's waiting and demo-mode
+   states, so a guarded page looks the same before and after the guard
+   resolves. */
+
+   .page {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 40px 16px 64px;
+  }
+  
+  .title {
+    font-size: 34px;
+  }
+  
+  .lede {
+    margin-top: 12px;
+    color: var(--color-n700);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  
+  .panel {
+    margin-top: 24px;
+    padding: 20px;
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius);
+  }
+  
+  .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  
+  .row:last-child {
+    border-bottom: 0;
+  }
+  
+  .rowLabel {
+    color: var(--color-n700);
+  }
+  
+  .actions {
+    margin-top: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  
+  .primary {
+    padding: 11px 18px;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--color-accent-deep);
+    font-size: 15px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  
+  .primary:hover {
+    background: var(--color-accent-tint);
+  }
+  
+  .quiet {
+    padding: 11px 18px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--color-n700);
+    font-size: 15px;
+    cursor: pointer;
+  }
+  
+  .quiet:hover:enabled {
+    color: var(--color-ink);
+  }
+  
+  .quiet:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  
+  /* Booking list */
+  
+  .list {
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    list-style: none;
+    padding: 0;
+  }
+  
+  .item {
+    display: block;
+    padding: 16px 18px;
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 140ms ease;
+  }
+  
+  .item:hover {
+    border-color: var(--color-line-strong);
+  }
+  
+  .itemTop {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  
+  .itemTitle {
+    font-family: var(--font-heading);
+    font-size: 19px;
+  }
+  
+  .itemTotal {
+    font-family: var(--font-heading);
+    font-size: 17px;
+  }
+  
+  .itemMeta {
+    margin-top: 6px;
+    color: var(--color-n700);
+    font-size: 14px;
+  }
+  
+  .itemRef {
+    margin-top: 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--color-n500);
+  }
+  
+  .empty {
+    margin-top: 24px;
+    padding: 24px 20px;
+    border: 1px dashed var(--color-line-strong);
+    border-radius: var(--radius);
+    text-align: center;
+    color: var(--color-n700);
+  }
+  
+  .footnote {
+    margin-top: 20px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-n500);
+  }
+  
+  .back {
+    display: inline-block;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  
+  .skeleton {
+    height: 160px;
+    border-radius: var(--radius);
+    background: var(--color-n200);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  
+  @keyframes pulse {
+    50% {
+      opacity: 0.45;
+    }
+  }

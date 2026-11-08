@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import styles from "@/css/SeatMap.module.css";
 import type { Seat as SeatType, Tier } from "@/types/api";
@@ -28,6 +28,11 @@ const BLOCKS = [
 
 type View = "fit" | "zoom";
 
+/* Where the scroller sits, as fractions of the full scrollable width. Null
+   when there is nothing to scroll, which is also when a minimap would be
+   lying about something. */
+type Viewport = { left: number; width: number };
+
 export function SeatMap({
   seats,
   selectedIds,
@@ -54,8 +59,61 @@ export function SeatMap({
      The cross-aisles depend on the rows being in sequence. */
   const rowLabels = [...rows.keys()].sort();
 
-    const gridRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const [focusedId, setFocusedId] = useState<number | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(null);
+
+  /* Measures the scroller rather than calculating from seat counts, so the
+     minimap stays truthful whatever the CSS does to seat widths later.
+
+     Cleared whenever there is no overflow: on a wide screen zoom can fit
+     entirely, and a minimap whose viewport covers the whole width is a
+     control that does nothing. */
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || view !== "zoom") {
+      setViewport(null);
+      return;
+    }
+
+    const measure = () => {
+      if (el.scrollWidth - el.clientWidth <= 1) {
+        setViewport(null);
+        return;
+      }
+      setViewport({
+        left: el.scrollLeft / el.scrollWidth,
+        width: el.clientWidth / el.scrollWidth,
+      });
+    };
+
+    measure();
+    /* passive: this listener never calls preventDefault, so it cannot block
+       scrolling. */
+    el.addEventListener("scroll", measure, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+
+    return () => {
+      el.removeEventListener("scroll", measure);
+      observer.disconnect();
+    };
+  }, [view]);
+
+  /* Centres the scroller on the point touched, so the thing under your finger
+     ends up in the middle of the map rather than at its left edge.
+
+     behavior auto, not smooth: this is direct manipulation and an animation
+     would lag behind a drag. */
+  function seek(event: React.PointerEvent<HTMLDivElement>) {
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const fraction = (event.clientX - rect.left) / rect.width;
+    el.scrollTo({ left: fraction * el.scrollWidth - el.clientWidth / 2 });
+  }
 
   /* Lookup by position, for arrow navigation. Built once per render rather
      than scanning 120 seats on every key press. */
@@ -135,9 +193,19 @@ export function SeatMap({
         </ViewButton>
       </div>
 
+      {viewport && (
+        <Minimap
+          rowLabels={rowLabels}
+          rows={rows}
+          selectedIds={selectedIds}
+          viewport={viewport}
+          onSeek={seek}
+        />
+      )}
+
       {/* Only this scrolls. The toolbar stays put so the way back to Fit does
           not scroll off the side with the seats. */}
-      <div className={styles.scroller}>
+      <div className={styles.scroller} ref={scrollerRef}>
         <div className={styles.stage}>
           <div className={styles.screenWrap} aria-hidden>
             <svg
@@ -152,12 +220,14 @@ export function SeatMap({
             <span className={styles.screen}>SCREEN</span>
           </div>
 
-          <div className={styles.rows}
-           ref={gridRef}
+          <div
+            className={styles.rows}
+            ref={gridRef}
             role="grid"
             aria-label="Seat map"
             onKeyDown={moveFocus}
-            onFocusCapture={trackFocus}>
+            onFocusCapture={trackFocus}
+          >
             {rowLabels.map((rowLabel, i) => {
               const rowSeats = rows.get(rowLabel) ?? [];
               const tier = tierOfRow(rowLabel);
@@ -204,7 +274,7 @@ export function SeatMap({
                                   selected={selectedIds.has(seat.id)}
                                   pending={pending}
                                   onSelect={onSelect}
-                                   tabIndex={seat.id === tabStopId ? 0 : -1}
+                                  tabIndex={seat.id === tabStopId ? 0 : -1}
                                 />
                               </div>
                             );
@@ -221,6 +291,99 @@ export function SeatMap({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The whole house at a glance, with a box around the part currently on screen.
+ * Only in zoom, and only when there is actually something off screen.
+ *
+ * aria-hidden, deliberately. Every seat here is already a real button in the
+ * grid below, announced with its row, number, tier, price and state, and the
+ * grid is fully arrow-navigable. A second focusable copy of 120 seats would
+ * double the tab order to duplicate navigation a keyboard user already has.
+ * This is a pointer convenience, so it is hidden from assistive tech rather
+ * than half-exposed to it.
+ *
+ * That is also why colour alone carries the state here, which the seats
+ * themselves never do: at four pixels a hatch or a mark is invisible, and
+ * held versus booked is not a distinction this control exists to make. It
+ * answers "where is there space and where am I", and the map below answers
+ * everything else.
+ */
+function Minimap({
+  rowLabels,
+  rows,
+  selectedIds,
+  viewport,
+  onSeek,
+}: {
+  rowLabels: string[];
+  rows: Map<string, SeatType[]>;
+  selectedIds: ReadonlySet<number>;
+  viewport: Viewport;
+  onSeek: (event: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      className={styles.minimap}
+      aria-hidden
+      /* Pointer events rather than mouse, so one handler covers touch, pen and
+         mouse. Capture makes a drag keep tracking after the finger leaves the
+         minimap's own box. */
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onSeek(event);
+      }}
+      onPointerMove={(event) => {
+        if (event.buttons !== 0) onSeek(event);
+      }}
+    >
+      <div className={styles.miniRows}>
+        {rowLabels.map((rowLabel) => {
+          const rowSeats = rows.get(rowLabel) ?? [];
+          return (
+            <div key={rowLabel} className={styles.miniRow}>
+              {BLOCKS.map((block, blockIndex) => (
+                <div key={blockIndex} className={styles.miniBlock}>
+                  {block.map((number) => {
+                    const seat = rowSeats.find((s) => s.seatNumber === number);
+                    if (!seat) return <span key={number} className={styles.miniGap} />;
+
+                    if (selectedIds.has(seat.id)) {
+                      return <span key={seat.id} className={styles.miniYours} />;
+                    }
+                    if (seat.status !== "AVAILABLE") {
+                      return <span key={seat.id} className={styles.miniTaken} />;
+                    }
+                    return (
+                      <span
+                        key={seat.id}
+                        className={styles.miniFree}
+                        style={{ ["--mini-tint" as string]: TIERS[seat.tier].cssVar }}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Positioned from the scroller's own numbers. The row labels sit
+          outside the seats in the real map and not here, so the box is off by
+          their width, around three percent of the stage. Visible to nobody,
+          and correcting it would mean the minimap duplicating the grid's
+          layout maths. */}
+      <div
+        className={styles.miniViewport}
+        style={{
+          left: `${viewport.left * 100}%`,
+          width: `${viewport.width * 100}%`,
+        }}
+      />
     </div>
   );
 }
@@ -249,4 +412,4 @@ function ViewButton({
       {children}
     </button>
   );
-}  
+}

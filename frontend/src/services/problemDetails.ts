@@ -22,9 +22,12 @@
      | "hold-already-converted"
      | "not-found"
      | "validation-failed"
-     | "unknown"
-    | "idempotency-key-in-progress"
-  | "idempotency-key-reused";
+     | "idempotency-key-in-progress"
+     | "idempotency-key-reused"
+     | "invalid-credentials"
+     | "email-taken"
+     | "invalid-refresh-token"
+     | "unknown";
    
    export class ApiError extends Error {
      readonly status: number;
@@ -46,9 +49,12 @@
          case "hold-expired":
          case "hold-already-converted":
          case "not-found":
-                case "idempotency-key-in-progress":
-      case "idempotency-key-reused":
          case "validation-failed":
+         case "idempotency-key-in-progress":
+         case "idempotency-key-reused":
+         case "invalid-credentials":
+         case "email-taken":
+         case "invalid-refresh-token":
            return segment;
          default:
            return "unknown";

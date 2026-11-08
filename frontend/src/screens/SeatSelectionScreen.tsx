@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { ConflictNotice } from "@/components/ConflictNotice";
 import { SeatLegend } from "@/components/SeatLegend";
 import { SeatMap } from "@/components/SeatMap";
 import styles from "@/css/SeatSelectionScreen.module.css";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
-import { MAX_SEATS_PER_HOLD } from "@/services/apiConfig";
+import { MAX_SEATS_MEMBER } from "@/services/apiConfig";
 import { ApiError } from "@/services/problemDetails";
 import type { Seat, UnavailableSeat } from "@/types/api";
 import { extendsRun, isRunEnd } from "@/utils/adjacency";
@@ -23,6 +24,7 @@ const byPosition = (a: Seat, b: Seat) =>
 export function SeatSelectionScreen() {
   const router = useRouter();
   const showtimeId = Number(useParams().showtimeId);
+  const { user, maxSeats } = useAuth();
 
   const [selected, setSelected] = useState<Seat[]>([]);
   const [holding, setHolding] = useState(false);
@@ -52,6 +54,14 @@ export function SeatSelectionScreen() {
       return kept.length === current.length ? current : kept;
     });
   }, [live]);
+
+  /* Signing out mid-selection drops the cap from six to three, so trim from
+     the far end rather than leaving a selection the API would now refuse. */
+  useEffect(() => {
+    setSelected((current) =>
+      current.length <= maxSeats ? current : current.slice(0, maxSeats),
+    );
+  }, [maxSeats]);
 
   const selectedIds = new Set(selected.map((s) => s.id));
   const subtotal = selected.reduce((sum, seat) => sum + seat.priceMinor, 0);
@@ -91,9 +101,11 @@ export function SeatSelectionScreen() {
       return;
     }
 
-    if (selected.length >= MAX_SEATS_PER_HOLD) {
+    if (selected.length >= maxSeats) {
       setNote(
-        `${MAX_SEATS_PER_HOLD} seats per booking. Remove one from either end to swap it.`,
+        user
+          ? `${maxSeats} seats per booking. Remove one from either end to swap it.`
+          : `${maxSeats} seats per booking as a guest. Sign in for up to ${MAX_SEATS_MEMBER}, or remove one from either end to swap it.`,
       );
       return;
     }
@@ -187,7 +199,7 @@ export function SeatSelectionScreen() {
             <p className={styles.kicker}>
               {count === 0
                 ? "YOUR SEATS"
-                : `YOUR SEATS · ${count} of ${MAX_SEATS_PER_HOLD}`}
+                : `YOUR SEATS · ${count} of ${maxSeats}`}
             </p>
 
             {count === 0 ? (
