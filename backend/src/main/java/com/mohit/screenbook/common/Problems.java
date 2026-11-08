@@ -10,7 +10,8 @@ public final class Problems {
     public static final String BASE = "https://screenbook.dev/problems";
 
     public static final String NOT_FOUND = BASE + "/not-found";
-    public static final String SEATS_UNAVAILABLE = BASE + "/seats-unavailable";    public static final String HOLD_EXPIRED = BASE + "/hold-expired";
+    public static final String SEATS_UNAVAILABLE = BASE + "/seats-unavailable";
+    public static final String HOLD_EXPIRED = BASE + "/hold-expired";
     public static final String HOLD_ALREADY_CONVERTED = BASE + "/hold-already-converted";
     public static final String VALIDATION_FAILED = BASE + "/validation-failed";
 
@@ -20,6 +21,7 @@ public final class Problems {
     public static final String INVALID_CREDENTIALS = BASE + "/invalid-credentials";
     public static final String EMAIL_TAKEN = BASE + "/email-taken";
     public static final String INVALID_REFRESH_TOKEN = BASE + "/invalid-refresh-token";
+
     private Problems() {
     }
 }

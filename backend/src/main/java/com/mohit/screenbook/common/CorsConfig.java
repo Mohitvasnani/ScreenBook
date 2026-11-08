@@ -6,14 +6,17 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * The frontend and the API are on different origins: localhost:3000 and
- * localhost:8082 in development, Vercel and Render in production. A browser
- * blocks every cross-origin call unless the server says otherwise, so without
- * this the live frontend fails on the first request with nothing in the
- * backend log, because the request never arrives.
+ * Not for this project's own frontend. That calls /api on its own origin,
+ * because Next.js rewrites it to this service, so those requests are
+ * same-origin and CORS never enters into them.
  *
- * Origins come from configuration, not from source, so the Vercel URL is set on
- * Render and nothing here changes between environments.
+ * This exists for the public API the README advertises: a browser client on
+ * some other origin reading showtimes and seat maps, or booking as a guest.
+ * Being signed in cross-origin is deliberately impossible, see
+ * allowCredentials below.
+ *
+ * Origins come from configuration, not source, so nothing here changes
+ * between environments.
  */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
@@ -37,9 +40,9 @@ public class CorsConfig implements WebMvcConfigurer {
                 /* Cross-origin JavaScript cannot read Location unless it is
                    exposed, and POST /api/holds returns one. */
                 .exposedHeaders("Location")
-                /* No cookies or auth headers: a hold id is the capability, and
-                   it travels in the URL. Keeping this false also avoids the
-                   rule that forbids credentials alongside a wildcard origin. */
+                /* No cookies, so no cross-origin session. A session cookie is
+                   only ever first-party, through the rewrite. A hold id is the
+                   capability for guest flows and it travels in the URL. */
                 .allowCredentials(false)
                 /* Cache the preflight, so the browser does not send an OPTIONS
                    before every single POST. */

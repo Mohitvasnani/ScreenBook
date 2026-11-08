@@ -45,6 +45,7 @@ dependencies {
     // Authorization header.
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+
 }
 
 
@@ -57,5 +58,22 @@ tasks.named('test') {
 		exceptionFormat 'full'
 		showStandardStreams = false
 	}
+}
+/* javac keeps deprecation detail off by default, so a build normally just says
+   some deprecated API was used somewhere. Naming the file and line is what
+   turns the warning in ApiExceptionHandler into something I can explain rather
+   than something I have to ignore. unchecked is here for the same reason. */
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-Xlint:deprecation' << '-Xlint:unchecked'
+}
+
+/* bootRun is a Gradle task that never runs in production, where the app starts
+   from the jar inside the Docker image. Supplying a local value here does not
+   weaken the no-default rule on COOKIES_SECURE: a misconfigured deployment
+   still refuses to start. It only stops that rule from costing a setup step in
+   every new terminal. An explicitly set variable still wins. */
+tasks.named('bootRun') {
+	environment 'COOKIES_SECURE',
+			providers.environmentVariable('COOKIES_SECURE').getOrElse('false')
 }
 

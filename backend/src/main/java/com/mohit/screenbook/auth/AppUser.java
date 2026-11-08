@@ -1,5 +1,6 @@
 package com.mohit.screenbook.auth;
 
+import com.mohit.screenbook.common.Emails;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -40,7 +41,7 @@ public class AppUser {
 
     public static AppUser of(String email, String passwordHash, String displayName, Instant now) {
         AppUser user = new AppUser();
-        user.email = email.trim().toLowerCase();
+        user.email = Emails.normalise(email);
         user.passwordHash = passwordHash;
         user.displayName = displayName.trim();
         user.createdAt = now;

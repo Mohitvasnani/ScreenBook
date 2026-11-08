@@ -1,6 +1,7 @@
 package com.mohit.screenbook.auth;
 
 import com.mohit.screenbook.common.EmailTakenException;
+import com.mohit.screenbook.common.Emails;
 import com.mohit.screenbook.common.InvalidCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -45,7 +46,7 @@ public class AuthService {
      */
     @Transactional
     public Session signUp(SignupRequest request) {
-        String email = request.email().trim().toLowerCase();
+        String email = Emails.normalise(request.email());
 
         /* Checked rather than caught from the unique index, because the honest
            answer here is a 409 and not a 500. The index is still the guarantee
@@ -65,7 +66,7 @@ public class AuthService {
 
     @Transactional
     public Session logIn(LoginRequest request) {
-        String email = request.email().trim().toLowerCase();
+        String email = Emails.normalise(request.email());
 
         AppUser user = users.findByEmail(email).orElse(null);
         if (user == null) {

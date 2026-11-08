@@ -6,7 +6,7 @@ import org.springframework.http.HttpStatus;
 public class ValidationFailedException extends ApiException {
 
     public ValidationFailedException(String detail) {
-        super(HttpStatus.UNPROCESSABLE_ENTITY, Problems.VALIDATION_FAILED,
+        super(HttpStatus.UNPROCESSABLE_CONTENT, Problems.VALIDATION_FAILED,
                 "Validation failed", detail);
     }
 }

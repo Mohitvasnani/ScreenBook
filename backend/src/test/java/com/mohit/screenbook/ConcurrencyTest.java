@@ -103,7 +103,7 @@ class ConcurrencyTest {
 
         List<String> outcomes = runTogether(2, () -> {
             try {
-                bookings.confirm(holdId);
+                bookings.confirm(holdId, null, null);
                 return "WON";
             } catch (HoldAlreadyConvertedException e) {
                 return "LOST";
@@ -223,8 +223,8 @@ class ConcurrencyTest {
         HoldResponse hold = holds.claim(target.showtimeId(), List.of(target.seatId()), null);
         String key = "replay-" + UUID.randomUUID();
 
-        BookingResponse first = idempotent.confirm(hold.holdId(), key);
-        BookingResponse second = idempotent.confirm(hold.holdId(), key);
+        BookingResponse first = idempotent.confirm(hold.holdId(), key, null, null);
+        BookingResponse second = idempotent.confirm(hold.holdId(), key, null, null);
 
         assertEquals(first.bookingReference(), second.bookingReference(),
                 "the retry should return the original booking");
@@ -243,10 +243,10 @@ class ConcurrencyTest {
         Target target = someAvailableSeat();
         HoldResponse hold = holds.claim(target.showtimeId(), List.of(target.seatId()), null);
 
-        idempotent.confirm(hold.holdId(), null);
+        idempotent.confirm(hold.holdId(), null, null, null);
 
         assertThrows(HoldAlreadyConvertedException.class,
-                () -> idempotent.confirm(hold.holdId(), null));
+                () -> idempotent.confirm(hold.holdId(), null, null, null));
     }
 
     /**
@@ -263,10 +263,10 @@ class ConcurrencyTest {
         HoldResponse second = holds.claim(showtimeId, List.of(pair.get(1).seatId()), null);
 
         String key = "reuse-" + UUID.randomUUID();
-        idempotent.confirm(first.holdId(), key);
+        idempotent.confirm(first.holdId(), key, null, null);
 
         assertThrows(IdempotencyKeyReusedException.class,
-                () -> idempotent.confirm(second.holdId(), key));
+                () -> idempotent.confirm(second.holdId(), key, null, null));
     }
 
     /**
@@ -287,7 +287,7 @@ class ConcurrencyTest {
 
         List<String> outcomes = runTogether(2, () -> {
             try {
-                return idempotent.confirm(hold.holdId(), key).bookingReference();
+                return idempotent.confirm(hold.holdId(), key, null, null).bookingReference();
             } catch (IdempotencyKeyInProgressException e) {
                 return "IN_PROGRESS";
             }

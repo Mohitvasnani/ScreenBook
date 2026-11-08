@@ -4,32 +4,32 @@ import com.mohit.screenbook.common.NotFoundException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * One query serves both the 201 body and GET /api/bookings/{reference}, so the
- * two cannot drift apart. No @Transactional of its own: it joins whatever
- * transaction the caller is in, which matters because the POST path reads back
- * a booking it has only just inserted.
+ * One query shape serves the 201 body, GET by reference, and the my-bookings
+ * list, so none of the three can drift from the others. No @Transactional of
+ * its own: it joins whatever transaction the caller is in, which matters
+ * because the POST path reads back a booking it has only just inserted.
  */
 @Repository
 public class BookingQuery {
 
     /**
      * Joining booking to booking_seat fans the result out: one row per seat,
-     * with the booking's own columns repeated on every row. That is normal for
-     * a parent-child join and it is why the rows are folded back into one
-     * response in Java below rather than mapped one-to-one.
-     *
-     * The alternative is two queries, a header and its seats. One query is
-     * fewer round trips and the repetition costs almost nothing at six rows.
-     *
-     * Note price_paid_minor comes from bs, not b: the booking no longer has a
-     * price, because a booking no longer has a single seat.
+     * with the booking's own columns repeated. That is normal for a
+     * parent-child join and it is why the rows are folded back together in
+     * Java rather than mapped one to one.
      */
-    private static final String BY_REFERENCE = """
+    private static final String SELECT = """
             SELECT b.reference         AS reference,
                    b.showtime_id       AS showtime_id,
                    f.title             AS film_title,
@@ -47,8 +47,24 @@ public class BookingQuery {
             JOIN showtime     st ON st.id         = b.showtime_id
             JOIN film         f  ON f.id          = st.film_id
             JOIN screen       sc ON sc.id         = st.screen_id
+            """;
+
+    private static final String BY_REFERENCE = SELECT + """
             WHERE b.reference = :reference
             ORDER BY s.row_label, s.seat_number
+            """;
+
+    /**
+     * user_id only, never email. booking.email is unverified: matching on it
+     * would let anyone read a stranger's history by signing up with their
+     * address.
+     *
+     * Ordered newest booking first, and within a booking by seat, so the fold
+     * below keeps both orders without sorting anything in Java.
+     */
+    private static final String BY_USER = SELECT + """
+            WHERE b.user_id = :userId
+            ORDER BY b.booked_at DESC, b.reference, s.row_label, s.seat_number
             """;
 
     private final JdbcClient jdbc;
@@ -60,29 +76,35 @@ public class BookingQuery {
     BookingResponse byReference(String reference) {
         List<Row> rows = jdbc.sql(BY_REFERENCE)
                 .param("reference", reference)
-                .query((rs, rowNum) -> new Row(
-                        rs.getString("reference"),
-                        rs.getLong("showtime_id"),
-                        rs.getString("film_title"),
-                        rs.getString("screen_name"),
-                        rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
-                        rs.getString("currency"),
-                        rs.getObject("booked_at", OffsetDateTime.class).toInstant(),
-                        rs.getString("row_label"),
-                        rs.getInt("seat_number"),
-                        rs.getString("tier"),
-                        rs.getInt("price_paid_minor")))
+                .query(BookingQuery::toRow)
                 .list();
 
-        /* No rows means no such reference. A booking cannot exist with zero
-           seats, so an empty result is never a real booking with nothing on it. */
         if (rows.isEmpty()) {
             throw new NotFoundException(
                     "No booking with reference %s.".formatted(reference));
         }
+        return fold(rows);
+    }
 
-        /* Every row carries the same booking columns, so the first one speaks
-           for the header. */
+    List<BookingResponse> forUser(UUID userId) {
+        List<Row> rows = jdbc.sql(BY_USER)
+                .param("userId", userId)
+                .query(BookingQuery::toRow)
+                .list();
+
+        /* Grouped by reference rather than by index, and into a LinkedHashMap
+           so the newest-first order from the query survives the grouping. */
+        Map<String, List<Row>> byBooking = new LinkedHashMap<>();
+        for (Row row : rows) {
+            byBooking.computeIfAbsent(row.reference(), key -> new ArrayList<>()).add(row);
+        }
+
+        return byBooking.values().stream().map(BookingQuery::fold).toList();
+    }
+
+    private static BookingResponse fold(List<Row> rows) {
+        /* Every row carries the same booking columns, so the first speaks for
+           the header. */
         Row head = rows.getFirst();
 
         return new BookingResponse(
@@ -101,7 +123,22 @@ public class BookingQuery {
                 head.bookedAt());
     }
 
-    /** One joined row, before the fan-out is folded back into one booking. */
+    private static Row toRow(ResultSet rs, int rowNum) throws SQLException {
+        return new Row(
+                rs.getString("reference"),
+                rs.getLong("showtime_id"),
+                rs.getString("film_title"),
+                rs.getString("screen_name"),
+                rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
+                rs.getString("currency"),
+                rs.getObject("booked_at", OffsetDateTime.class).toInstant(),
+                rs.getString("row_label"),
+                rs.getInt("seat_number"),
+                rs.getString("tier"),
+                rs.getInt("price_paid_minor"));
+    }
+
+    /** One joined row, before the fan-out is folded back into bookings. */
     private record Row(
             String reference,
             long showtimeId,

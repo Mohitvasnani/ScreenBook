@@ -1,5 +1,6 @@
 package com.mohit.screenbook.booking;
 
+import com.mohit.screenbook.common.Emails;
 import com.mohit.screenbook.common.IdempotencyKeyInProgressException;
 import com.mohit.screenbook.common.IdempotencyKeyReusedException;
 import org.springframework.stereotype.Service;
@@ -8,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -16,9 +18,8 @@ import java.util.UUID;
  * Deliberately NOT @Transactional. The claim must commit before the booking
  * starts, which cannot happen if both are in one transaction.
  *
- * The header is optional: a request without one behaves exactly as before, so
- * poking at the API by hand or through Swagger still works. The frontend always
- * sends one.
+ * Writes only. Reading a booking needs none of this, so the read paths go
+ * straight to BookingService rather than through here.
  */
 @Service
 public class IdempotentBookings {
@@ -31,20 +32,17 @@ public class IdempotentBookings {
         this.keys = keys;
     }
 
-    public BookingResponse confirm(UUID holdId, String idempotencyKey) {
+    public BookingResponse confirm(UUID holdId, String idempotencyKey, UUID userId, String email) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            return bookings.confirm(holdId);
+            return bookings.confirm(holdId, userId, email);
         }
 
-        String hash = sha256(holdId.toString());
+        String hash = requestHash(holdId, userId, email);
 
         /* Claim first. Losing this race means another request already owns the
            key, and the only question is what it did with it. */
         if (!keys.claim(idempotencyKey, hash)) {
             IdempotencyStore.Claim existing = keys.find(idempotencyKey)
-                    /* Gone between the failed insert and this read, so the other
-                       attempt failed and released it. Telling the client to
-                       retry is correct and is also what it would do anyway. */
                     .orElseThrow(IdempotencyKeyInProgressException::new);
 
             if (!existing.requestHash().equals(hash)) {
@@ -53,41 +51,42 @@ public class IdempotentBookings {
             if (!existing.finished()) {
                 throw new IdempotencyKeyInProgressException();
             }
-
-            /* Re-read rather than replay a stored body. A booking never
-               changes, so this reproduces the original response exactly. */
             return bookings.find(existing.bookingReference());
         }
 
         try {
-            BookingResponse booking = bookings.confirm(holdId);
+            BookingResponse booking = bookings.confirm(holdId, userId, email);
             keys.complete(idempotencyKey, booking.bookingReference());
             return booking;
         } catch (RuntimeException e) {
-            /* An expired hold or a double submit is a real failure, and the key
-               should not be left claiming a booking that does not exist. */
             keys.release(idempotencyKey);
             throw e;
         }
     }
 
     /**
-     * Hashes the request's one meaningful field rather than the raw bytes,
-     * which Spring has already consumed by the time this runs. If the body ever
-     * grows past one field, this has to hash a canonical serialisation instead,
-     * or two equivalent requests with different key order would disagree.
+     * Covers everything that changes the outcome, not just the hold. The same
+     * key used for the same hold but a different account would otherwise
+     * replay a booking attributed to someone else, which is exactly the
+     * mistake the reuse check exists to catch.
+     *
+     * The first two fields are a UUID or empty and a UUID contains no pipe,
+     * so the first two separators are unambiguous and everything after the
+     * second one is the address. Absent fields are empty rather than the word
+     * null, so the string says what it means.
+     *
+     * Emails.normalise, the same call the entity makes, so the hashed value
+     * and the stored value cannot disagree.
      */
-    private static String sha256(String value) {
+    private static String requestHash(UUID holdId, UUID userId, String email) {
+        String canonical = holdId
+                + "|" + Objects.toString(userId, "")
+                + "|" + Objects.toString(Emails.normalise(email), "");
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
-            /* SHA-256 is required of every JVM, so this is unreachable. */
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
-    }
-    public BookingResponse find(String reference) {
-        return bookings.find(reference);
     }
 }

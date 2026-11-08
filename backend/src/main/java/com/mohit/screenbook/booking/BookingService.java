@@ -46,12 +46,12 @@ public class BookingService {
      * What makes it safe is @Version on the hold: the UPDATE carries
      * AND version = ?, so the second writer affects zero rows and loses.
      *
-     * One version check covers the whole hold however many seats it holds,
-     * which is the payoff of keeping the seats as an owned collection rather
-     * than the inverse side of a @OneToMany.
+     * Ownership is decided here rather than on the hold. A guest can hold
+     * seats, sign in, and confirm, and the booking is theirs: who you are at
+     * the moment you commit is what matters, not who you were while browsing.
      */
     @Transactional
-    public BookingResponse confirm(UUID holdId) {
+    public BookingResponse confirm(UUID holdId, UUID userId, String email) {
         SeatHold hold = holds.findById(holdId)
                 .orElseThrow(() -> new NotFoundException(
                         "No hold with id %s.".formatted(holdId)));
@@ -74,9 +74,6 @@ public class BookingService {
                 .sorted()
                 .toList();
 
-        /* Each seat's own price, not the showtime's base. One query for all of
-           them, from the same view the seat map reads, so what was displayed
-           and what gets charged come from one definition. */
         List<SeatView> rows = seatMap.seatsByIds(hold.getShowtimeId(), seatIds);
         if (rows.size() != seatIds.size()) {
             throw new IllegalStateException(
@@ -88,29 +85,24 @@ public class BookingService {
 
         hold.markBooked(now);
 
-        /* Prices and currency are copied, not referenced. They record what was
-           charged, so a later price change does not rewrite history. */
         Booking booking = Booking.of(
                 hold.getId(), hold.getShowtimeId(),
                 prices, rows.getFirst().currency(),
-                BookingReference.generate(), now);
+                BookingReference.generate(), userId, email, now);
 
         try {
             /* saveAndFlush, not save. JPA would otherwise defer both statements
                to commit, which happens after this method returns, and the
-               exceptions below could not be caught here at all. The hold goes
-               first so a double submit is caught by the version rather than by
-               a constraint, which gives the more accurate error. */
+               exceptions below could not be caught here at all. */
             holds.saveAndFlush(hold);
             bookings.saveAndFlush(booking);
         } catch (OptimisticLockingFailureException e) {
             throw new HoldAlreadyConvertedException(
                     "That hold has already been converted into a booking.");
         } catch (DataIntegrityViolationException e) {
-            /* The backstop fired: UNIQUE (hold_id) on booking, or
-               UNIQUE (showtime_id, seat_id) on booking_seat. Reaching here
-               means the version check above was bypassed somehow, so the
-               database saved us. Same answer to the client either way. */
+            /* UNIQUE (hold_id) on booking, or UNIQUE (showtime_id, seat_id) on
+               booking_seat. Reaching here means the version check was bypassed
+               somehow, so the database saved us. */
             throw new HoldAlreadyConvertedException(
                     "That hold has already been converted into a booking.");
         }
@@ -121,5 +113,11 @@ public class BookingService {
     @Transactional(readOnly = true)
     public BookingResponse find(String reference) {
         return bookingQuery.byReference(reference);
+    }
+
+    /** Signed-in bookings only. See BookingQuery.forUser. */
+    @Transactional(readOnly = true)
+    public List<BookingResponse> forUser(UUID userId) {
+        return bookingQuery.forUser(userId);
     }
 }

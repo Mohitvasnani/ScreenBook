@@ -49,7 +49,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .collect(Collectors.joining("; "));
 
         ProblemDetail body = ProblemDetail.forStatusAndDetail(
-                HttpStatus.UNPROCESSABLE_ENTITY,
+                HttpStatus.UNPROCESSABLE_CONTENT,
                 detail.isBlank() ? "Request validation failed." : detail);
         body.setType(URI.create(Problems.VALIDATION_FAILED));
         body.setTitle("Validation failed");
@@ -57,6 +57,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             body.setInstance(URI.create(servletWebRequest.getRequest().getRequestURI()));
         }
 
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(body);
     }
 }

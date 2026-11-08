@@ -1,5 +1,6 @@
 package com.mohit.screenbook.booking;
 
+import com.mohit.screenbook.common.Emails;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -19,10 +20,6 @@ import java.util.UUID;
  * A booking never changes once written, so every column is updatable = false
  * and there is no @Version. Cancellation is out of scope, and if it arrives it
  * is a new row, not an edit.
- *
- * One booking covers every seat on its hold. The seats and their prices live
- * in booking_seat; the parent keeps only what is true of the whole
- * transaction.
  */
 @Entity
 @Table(name = "booking")
@@ -42,16 +39,21 @@ public class Booking {
     private Long showtimeId;
 
     /**
-     * The booked seats with their prices.
-     *
-     * Same mapping choice as SeatHold: an owned element collection, because
-     * these rows have no identity. Immutable after construction, so the
-     * wholesale rewrite that element collections do on change never happens.
-     *
-     * LAZY, so loading a booking to check its reference does not drag the seat
-     * rows. Anything that needs them reads them inside the transaction;
-     * BookingQuery goes to SQL directly rather than through here.
+     * Null for a guest booking. Set when someone was signed in at the moment
+     * they confirmed, which is what "my bookings" is built on.
      */
+    @Column(name = "user_id", updatable = false)
+    private UUID userId;
+
+    /**
+     * Null unless supplied. Only purpose is sending a confirmation; it is
+     * never used to decide who a booking belongs to, because an unverified
+     * address would let anyone claim someone else's history by signing up with
+     * their email.
+     */
+    @Column(updatable = false)
+    private String email;
+
     @ElementCollection
     @CollectionTable(
             name = "booking_seat",
@@ -59,10 +61,6 @@ public class Booking {
     )
     private Set<BookingSeat> seats = new LinkedHashSet<>();
 
-    /**
-     * One currency for the whole booking. One transaction, one currency:
-     * putting it on each seat would let a single booking be half in pounds.
-     */
     @Column(nullable = false, updatable = false)
     private String currency;
 
@@ -78,12 +76,11 @@ public class Booking {
      *
      * Prices arrive as a map from seat id to price so a seat cannot be listed
      * twice by construction, and so the caller has to have resolved a price
-     * for every seat before it gets here. Passing two parallel collections
-     * would allow a seat with no price.
+     * for every seat before it gets here.
      */
     public static Booking of(UUID holdId, Long showtimeId,
                              Map<Long, Integer> pricesBySeatId, String currency,
-                             String reference, Instant now) {
+                             String reference, UUID userId, String email, Instant now) {
         if (pricesBySeatId == null || pricesBySeatId.isEmpty()) {
             throw new IllegalArgumentException("A booking must cover at least one seat");
         }
@@ -93,6 +90,11 @@ public class Booking {
         booking.showtimeId = showtimeId;
         booking.currency = currency;
         booking.reference = reference;
+        booking.userId = userId;
+        /* Normalised here rather than trusted from the caller, because the
+           CHECK on the column is what finally enforces it and the entity is
+           the last thing to touch the value before the INSERT. */
+        booking.email = Emails.normalise(email);
         booking.bookedAt = now;
         pricesBySeatId.forEach((seatId, priceMinor) ->
                 booking.seats.add(BookingSeat.of(seatId, showtimeId, priceMinor)));
@@ -103,6 +105,8 @@ public class Booking {
     public String getReference() { return reference; }
     public UUID getHoldId() { return holdId; }
     public Long getShowtimeId() { return showtimeId; }
+    public UUID getUserId() { return userId; }
+    public String getEmail() { return email; }
     public String getCurrency() { return currency; }
     public Instant getBookedAt() { return bookedAt; }
 
@@ -114,8 +118,6 @@ public class Booking {
     /**
      * Derived, never stored. A stored total is a second place for the truth to
      * live and a chance for it to drift from the lines it summarises.
-     * BookingQuery does the same sum in SQL for reads, because that path never
-     * loads the entity.
      */
     public int totalMinor() {
         return seats.stream().mapToInt(BookingSeat::getPricePaidMinor).sum();
