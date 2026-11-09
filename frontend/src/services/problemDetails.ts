@@ -29,9 +29,7 @@
      | "email-taken"
      | "invalid-refresh-token"
      | "invalid-reset-token"
-     | "invalid-email-verification-token"
      | "unknown";
-    
    
    export class ApiError extends Error {
      readonly status: number;
