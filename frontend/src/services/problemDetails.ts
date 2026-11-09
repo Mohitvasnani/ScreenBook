@@ -16,10 +16,11 @@
    
    /* The cases the client knows how to react to. Anything else is "unknown" and
       gets generic handling. */
-   export type ProblemSlug =
+      export type ProblemSlug =
      | "seats-unavailable"
      | "hold-expired"
      | "hold-already-converted"
+     | "showtime-started"
      | "not-found"
      | "validation-failed"
      | "idempotency-key-in-progress"
@@ -27,7 +28,10 @@
      | "invalid-credentials"
      | "email-taken"
      | "invalid-refresh-token"
+     | "invalid-reset-token"
+     | "invalid-email-verification-token"
      | "unknown";
+    
    
    export class ApiError extends Error {
      readonly status: number;
@@ -50,20 +54,22 @@
        const type = typeof this.problem.type === "string" ? this.problem.type : "";
        const segment = type.split("/").pop() ?? "";
        switch (segment) {
-         case "seats-unavailable":
-         case "hold-expired":
-         case "hold-already-converted":
-         case "not-found":
-         case "validation-failed":
-         case "idempotency-key-in-progress":
-         case "idempotency-key-reused":
-         case "invalid-credentials":
-         case "email-taken":
-         case "invalid-refresh-token":
-           return segment;
-         default:
-           return "unknown";
-       }
+        case "seats-unavailable":
+        case "hold-expired":
+        case "hold-already-converted":
+        case "showtime-started":
+        case "not-found":
+        case "validation-failed":
+        case "idempotency-key-in-progress":
+        case "idempotency-key-reused":
+        case "invalid-credentials":
+        case "email-taken":
+        case "invalid-refresh-token":
+        case "invalid-reset-token":
+          return segment;
+        default:
+          return "unknown";
+      }
      }
    
      is(slug: ProblemSlug): boolean {
