@@ -43,7 +43,12 @@
      /* Last segment of the type URI. The full URI can change host without the
         meaning changing, so the slug is what's worth switching on. */
      get slug(): ProblemSlug {
-       const segment = this.problem.type.split("/").pop() ?? "";
+       /* Guards the type rather than trusting it. Not everything that answers
+          a request is this API: a proxy, a CDN or a platform error page can
+          return JSON with no type at all, and a getter that throws turns a
+          readable failure into a blank screen. */
+       const type = typeof this.problem.type === "string" ? this.problem.type : "";
+       const segment = type.split("/").pop() ?? "";
        switch (segment) {
          case "seats-unavailable":
          case "hold-expired":

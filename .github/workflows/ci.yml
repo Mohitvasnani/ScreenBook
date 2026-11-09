@@ -52,6 +52,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+
+      # LayoutProps and PageProps are generated, not shipped in a package, and
+      # they live in .next/types which is gitignored. A clean checkout has
+      # neither, so the typecheck below would fail on a type nothing has
+      # produced yet. typegen writes them without paying for a full build.
+      - run: npx next typegen
+
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run build

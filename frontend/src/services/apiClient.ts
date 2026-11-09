@@ -104,18 +104,32 @@
      });
    
      if (!response.ok) {
-       /* The API sends problem details. A proxy error page or a crashed process
-          might not, so synthesise the same shape and keep one error type for
-          callers to handle. */
-       let detail: ProblemDetail;
+       /* The API sends problem details. A proxy, a CDN or a platform error
+          page does not, so anything not recognisably RFC 9457 is replaced with
+          the same shape and callers keep one error type to handle.
+
+          The check is on the parsed body, not merely on whether it parsed. A
+          Vercel 404 is valid JSON with no type field, and casting it handed
+          every caller an object that lied about its shape. */
+       const fallback: ProblemDetail = {
+         type: "about:blank",
+         title: response.statusText || "Request failed",
+         status: response.status,
+       };
+
+       let detail = fallback;
        try {
-         detail = (await response.json()) as ProblemDetail;
+         const body: unknown = await response.json();
+         if (
+           typeof body === "object" &&
+           body !== null &&
+           typeof (body as ProblemDetail).type === "string"
+         ) {
+           detail = body as ProblemDetail;
+         }
        } catch {
-         detail = {
-           type: "about:blank",
-           title: response.statusText || "Request failed",
-           status: response.status,
-         };
+         /* Not JSON at all, usually an HTML error page. fallback already says
+            everything knowable about it. */
        }
        throw new ApiError(detail);
      }
