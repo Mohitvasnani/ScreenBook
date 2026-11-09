@@ -26,6 +26,15 @@
   gap: 32px;
 }
 
+/* Grid items default to min-width: auto, which resolves to min-content, so a
+   child wider than its column widens the whole grid instead of being clipped.
+   The seat map in zoom is exactly that child: its stage is width: max-content,
+   so without this the page scrolls sideways, header and all, and SeatMap's
+   own .scroller never gets the chance to scroll anything. */
+.layout > * {
+  min-width: 0;
+}
+
 .aside {
   align-self: start;
 }
