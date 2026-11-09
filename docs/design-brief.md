@@ -46,7 +46,7 @@ figures through a `.tnum` utility wherever numbers sit in a column.
 
 ---
 
-## Pages (5)
+## Pages (9)
 
 ### 1. `/` Showtimes
 
@@ -126,12 +126,52 @@ viewer will remember.
 
 ---
 
+### 6. `/login` and `/signup` Accounts
+
+**Role:** optional. Everything books without them.
+
+**Shows:** one field set. Login takes email and password; signup adds a name.
+
+**Action:** on success the session arrives as httpOnly cookies and the user is
+returned to wherever they were, via a `?next=` path that is validated rather
+than trusted.
+
+**States:** idle, submitting, field error (signup only), form error, already
+signed in (redirects away), demo mode (explains that accounts need the live
+API, because a service worker cannot reproduce httpOnly cookies, CSRF and
+refresh rotation).
+
+Login is deliberately vague about which half was wrong, because the API answers
+"no such account" and "wrong password" identically and splitting them here
+would hand anyone a way to test which addresses are registered. Signup cannot
+be vague, since it has to say an address is taken or you can never finish. That
+asymmetry is accepted, not overlooked.
+
+### 7. `/account` and `/account/bookings` The account
+
+**Role:** see who you are, and every booking belonging to you.
+
+**Shows:** name, email, join date, seat allowance. The list shows each booking
+newest first, linking to the public confirmation page rather than duplicating
+it.
+
+**States:** waiting for the session check, guest (redirects to login with a
+`?next=` back), loaded, empty, load error, demo mode.
+
+**The state worth designing:** empty. Someone who booked as a guest and then
+signed up with the same address finds nothing here and concludes their booking
+is gone. It is not, and the screen says why: an unverified address is not proof
+of ownership, so the list matches on the account only, and guest bookings stay
+reachable by their reference.
+
+---
+
 ## Components
 
 ### Shell
 | Component | Role | States | Status |
 |---|---|---|---|
-| `SiteHeader` | wordmark, mode badge, link to the race demo | default, scrolled | built: sticky, shrinks and earns a shadow once scrolled |
+| `SiteHeader` | wordmark, mode badge, race demo link, account state | default, scrolled, guest, signed in, session unknown | built. The third auth state is the point: before the startup check lands, "no user" and "not yet known" are the same value, so the slot renders nothing rather than showing Sign in to someone already signed in |
 | `ModeBanner` | one line: mock data or live API | demo, live | built: sits above the sticky header, so it scrolls away |
 | `SiteFooter` | links to the repo and the API docs | one | built |
 
@@ -145,11 +185,12 @@ viewer will remember.
 | Component | Role | States |
 |---|---|---|
 | `ScreenCurve` | the "SCREEN" marker above the grid | one |
-| `SeatMap` | the grid, including aisles | loading, loaded |
+| `SeatMap` | the grid, including aisles | loading, loaded, fit, zoom |
+| `Minimap` | the whole house at a glance with the visible part boxed | only in zoom, and only when the stage overflows |
 | `SeatRow` | row letter at both ends plus 12 seats | one |
 | `Seat` | **the hard one.** One seat | available, selected, held by someone else, booked, hover, keyboard focus, pending |
 | `SeatLegend` | key to the four seat states | one |
-| `SelectionSummary` | chosen seats with prices, removal, running total, Hold button | nothing selected, 1 to 6 chosen, cap reached, submitting |
+| `SelectionSummary` | chosen seats with prices, removal, running total, Hold button | nothing selected, within cap, cap reached, submitting |
 | `ConflictNotice` | which seats went and what state each is in now | one lost, several lost |
 
 ### Checkout
@@ -159,6 +200,7 @@ viewer will remember.
 | `HeldSeatSummary` | film, screen, time, seat, price | one |
 | `ConfirmButton` | convert hold to booking | idle, submitting, disabled |
 | `ExpiredNotice` | hold lapsed, with a route back | one |
+| `GuestEmail` | optional address for the confirmation | guest (input), signed in (replaced by a line naming the account) |
 
 ### Confirmation
 | Component | Role | States |
@@ -235,8 +277,8 @@ These come from the API and changing them means changing the backend.
 
 - 10 rows labelled A to J, 12 seats per row, 120 seats total, one screen layout
 - A hold lasts 300 seconds
-- **One to six seats per hold, all or nothing.** The cap is enforced by the
-  server, not just the UI. If any seat is lost between choosing and holding,
+- **One to three seats per hold as a guest, one to six signed in, all or
+  nothing.** The cap is enforced by the server, not just the UI. If any seat is lost between choosing and holding,
   nothing is held, and the 409 names which seats went and what state each is in
 - **Seats must be adjacent:** one row, no gaps. Aisles do not break a run, so
   seats 3 and 4 count as neighbours. Enforced by the server as well as the UI.
@@ -250,7 +292,17 @@ These come from the API and changing them means changing the backend.
   pence: Normal 0, Premium +250, Executive +500. The API resolves the sum and
   sends `priceMinor` on each seat; the client never does that arithmetic. The
   price on the showtimes list is the lowest tier, so it reads as "from"
-- No login, no account, no payment step. Nobody signs in
+- No payment step. Nothing is charged
+- **Accounts are optional and change exactly three things:** the seat cap, 3
+  as a guest and 6 signed in; attribution, so a booking confirmed while
+  signed in appears in my-bookings; and nothing else. Every booking endpoint
+  behaves identically with or without a session. Guest checkout is the
+  default path, not a fallback
+- **Booking ownership is decided at confirm, not at hold.** A guest can pick
+  seats, sign in, and the booking is theirs
+- **My-bookings matches on the account, never on the email.** The address on
+  a booking is unverified, so matching on it would hand a stranger's history
+  to anyone who signs up with their address
 - Booking references are `SB-` followed by 6 characters
 - Seat states are exactly four: AVAILABLE, HELD, BOOKED, and the user's own
   SELECTED before they press Hold

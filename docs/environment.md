@@ -189,6 +189,25 @@ know about it, so the first deployment is:
 
 Step 3 is the one to do deliberately rather than assume. It tests the proxy, not
 the API: hitting the Render URL directly proves nothing about whether the rewrite
-works, and the entire cookie design depends on that one path. A Vercel
-`404: NOT_FOUND` there means the deployed build predates the rewrite. A 502 means
-`API_ORIGIN` is wrong or unset.
+works, and the entire cookie design depends on that one path.
+
+### Reading a failure at step 3
+
+A rewrite with an absolute destination is compiled into a Vercel platform route
+and proxied by Vercel, not by the Next server. That changes what the errors mean,
+and it is worth knowing because it cost a day:
+
+- **Vercel's own `404: NOT_FOUND`** page means `API_ORIGIN` is unset, so the
+  platform is trying to proxy to the `http://localhost:8082` fallback and cannot
+  resolve it. It is not a missing route and not a stale build.
+- **Next's own "404: This page could not be found."** means the request reached
+  the app, so the rewrite is absent from the deployed build.
+
+Telling those two apart is the whole diagnosis. Compare against a path Next
+definitely owns but does not have, such as `/definitely-not-a-route`: if that
+returns Next's 404 while `/api/showtimes` returns Vercel's, the request is being
+intercepted above the app and the destination is the problem.
+
+Also delete `NEXT_PUBLIC_API_URL` from Vercel once `API_ORIGIN` is set. Nothing
+reads it any more, and leaving the right URL under a name nothing reads is how
+someone later concludes the API is configured when it is not.
