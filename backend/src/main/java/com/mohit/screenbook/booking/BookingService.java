@@ -80,8 +80,13 @@ public class BookingService {
                     "Hold %s references seats that do not exist".formatted(holdId));
         }
 
-        Map<Long, Integer> prices = rows.stream()
-                .collect(Collectors.toMap(SeatView::id, SeatView::priceMinor));
+               /* The prices come off the hold, never from the seat map. This is the
+           single change the whole wave is for. The map's price moves with
+           occupancy, so re-reading it here would charge a number the customer
+           never saw, and the seat map read above now exists only to supply the
+           currency and to prove the seats still exist. */
+        Map<Long, Integer> prices = hold.getSeats().stream()
+                .collect(Collectors.toMap(HoldSeat::getSeatId, HoldSeat::getPriceMinor));
 
         hold.markBooked(now);
 

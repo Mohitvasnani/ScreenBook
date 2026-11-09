@@ -1,7 +1,9 @@
 package com.mohit.screenbook.common;
 
+import com.mohit.screenbook.pricing.PricingProperties;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -11,6 +13,7 @@ import java.time.Clock;
  * Application-wide beans and the OpenAPI document's metadata.
  */
 @Configuration
+@EnableConfigurationProperties(PricingProperties.class)
 @OpenAPIDefinition(info = @Info(
         title = "ScreenBook API",
         version = "0.1.0",

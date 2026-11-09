@@ -4,38 +4,33 @@ import com.mohit.screenbook.common.NotFoundException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.Collection;
 import java.util.List;
 
 @Repository
 public class SeatMapQuery {
 
+    /* base_price_minor since V12: the seat's listed price, before any demand
+       rule touches it. It lands in SeatView.priceMinor, which is still the
+       final price as far as the API is concerned, because no rules exist yet.
+       When they do, the rules are applied between this query and the response,
+       and that is the step that makes the two names mean different things. */
     private static final String SEAT_MAP = """
             SELECT seat_id, row_label, seat_number, status,
-                   tier, tier_name, price_minor, currency
+                   tier, tier_name, base_price_minor, currency
             FROM seat_availability
             WHERE showtime_id = :showtimeId
             ORDER BY row_label, seat_number
             """;
+
     private static final String SEATS_BY_ID = """
             SELECT seat_id, row_label, seat_number, status,
-                   tier, tier_name, price_minor, currency
+                   tier, tier_name, base_price_minor, currency
             FROM seat_availability
             WHERE showtime_id = :showtimeId
               AND seat_id IN (:seatIds)
             ORDER BY row_label, seat_number
-            """;
-    private static final String SEAT_PRICE = """
-            SELECT price_minor, currency
-            FROM seat_availability
-            WHERE showtime_id = :showtimeId
-              AND seat_id     = :seatId
-            """;
-    private static final String SEAT_STATUS = """
-            SELECT status
-            FROM seat_availability
-            WHERE showtime_id = :showtimeId
-              AND seat_id     = :seatId
             """;
 
     private static final String SHOWTIME_EXISTS =
@@ -51,15 +46,7 @@ public class SeatMapQuery {
     public SeatMapResponse forShowtime(long showtimeId) {
         List<SeatView> seats = jdbc.sql(SEAT_MAP)
                 .param("showtimeId", showtimeId)
-                .query((rs, rowNum) -> new SeatView(
-                        rs.getLong("seat_id"),
-                        rs.getString("row_label"),
-                        rs.getInt("seat_number"),
-                        SeatStatus.valueOf(rs.getString("status")),
-                        rs.getString("tier"),
-                        rs.getString("tier_name"),
-                        rs.getInt("price_minor"),
-                        rs.getString("currency")))
+                .query(SeatMapQuery::toSeatView)
                 .list();
 
         /* An empty list is ambiguous: either no such showtime, or a real
@@ -72,67 +59,41 @@ public class SeatMapQuery {
     }
 
     /**
-     * One seat's status. Deliberately has no @Transactional of its own: it is
-     * called from inside the claim transaction, after that transaction has
-     * locked the seat row. Opening its own transaction here would read outside
-     * the lock and the lock would protect nothing.
-     */
-    public SeatStatus statusOf(long showtimeId, long seatId) {
-        return jdbc.sql(SEAT_STATUS)
-                .param("showtimeId", showtimeId)
-                .param("seatId", seatId)
-                .query(String.class)
-                .optional()
-                .map(SeatStatus::valueOf)
-                .orElseThrow(() -> new NotFoundException(
-                        "No seat with id %d for showtime %d.".formatted(seatId, showtimeId)));
-    }
-
-
-    /**
-     * What this seat costs for this showtime. Like statusOf, deliberately has
-     * no @Transactional: it is called from inside the booking transaction and
-     * must read what that transaction can see.
-     */
-    public SeatPrice priceOf(long showtimeId, long seatId) {
-        return jdbc.sql(SEAT_PRICE)
-                .param("showtimeId", showtimeId)
-                .param("seatId", seatId)
-                .query((rs, rowNum) -> new SeatPrice(
-                        rs.getInt("price_minor"),
-                        rs.getString("currency")))
-                .optional()
-                .orElseThrow(() -> new IllegalStateException(
-                        "Hold references seat %d / showtime %d, which the seat map does not have"
-                                .formatted(seatId, showtimeId)));
-    }
-    /**
-     * Several seats at once, with their status and price. One query rather than
-     * one per seat, and ordered for display, so the claim path gets its
-     * availability check and its response data from the same read.
+     * Several seats at once, with their status and listed price. One query
+     * rather than one per seat, and ordered for display, so the claim path
+     * gets its availability check and its response data from the same read.
      *
-     * No @Transactional, same reason as statusOf: this runs inside the claim
-     * transaction, after it has locked the seat rows, and must read what that
-     * transaction can see.
+     * No @Transactional, deliberately: this runs inside the claim transaction,
+     * after it has locked the seat rows, and must read what that transaction
+     * can see. Opening its own transaction would read outside the lock and the
+     * lock would protect nothing.
      *
-     * Fewer rows than seat ids means a seat id that is not in this showtime's
-     * screen. The caller decides what that is: here it is a 404, because a seat
-     * that was never there is a different mistake from a seat that has gone.
+     * Fewer rows than seat ids means a seat that is not in this showtime's
+     * screen. The caller decides what that is: in HoldService it is a 404,
+     * because a seat that was never there is a different mistake from a seat
+     * that has gone.
      */
     public List<SeatView> seatsByIds(long showtimeId, Collection<Long> seatIds) {
         return jdbc.sql(SEATS_BY_ID)
                 .param("showtimeId", showtimeId)
                 .param("seatIds", seatIds)
-                .query((rs, rowNum) -> new SeatView(
-                        rs.getLong("seat_id"),
-                        rs.getString("row_label"),
-                        rs.getInt("seat_number"),
-                        SeatStatus.valueOf(rs.getString("status")),
-                        rs.getString("tier"),
-                        rs.getString("tier_name"),
-                        rs.getInt("price_minor"),
-                        rs.getString("currency")))
+                .query(SeatMapQuery::toSeatView)
                 .list();
+    }
+
+    /* One row mapper, not three copies. The three-copy version was already a
+       smell and became a liability the moment the price column was renamed. */
+    private static SeatView toSeatView(java.sql.ResultSet rs, int rowNum)
+            throws java.sql.SQLException {
+        return new SeatView(
+                rs.getLong("seat_id"),
+                rs.getString("row_label"),
+                rs.getInt("seat_number"),
+                SeatStatus.valueOf(rs.getString("status")),
+                rs.getString("tier"),
+                rs.getString("tier_name"),
+                rs.getInt("base_price_minor"),
+                rs.getString("currency"));
     }
 
     private boolean showtimeExists(long showtimeId) {

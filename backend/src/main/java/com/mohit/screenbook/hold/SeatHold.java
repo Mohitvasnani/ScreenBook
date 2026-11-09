@@ -1,5 +1,7 @@
 package com.mohit.screenbook.hold;
 
+import com.mohit.screenbook.pricing.PriceBreakdown;
+import com.mohit.screenbook.pricing.PriceRule;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -13,7 +15,9 @@ import org.hibernate.annotations.UuidGenerator;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -36,6 +40,15 @@ public class SeatHold {
     private Long showtimeId;
 
     /**
+     * The seat's listed price for this hold's tier, before any demand rule.
+     * One value for the whole hold, because a hold covers one tier, and it is
+     * what the breakdown counts up from: base plus every rule line equals the
+     * per-seat price on the children.
+     */
+    @Column(name = "base_price_minor", nullable = false, updatable = false)
+    private int basePriceMinor;
+
+    /**
      * The seats this hold covers, one to six of them.
      *
      * @ElementCollection stores a collection of value types in a table of
@@ -51,8 +64,7 @@ public class SeatHold {
      *
      * LAZY by default, which is correct. With spring.jpa.open-in-view=false
      * this has to be read inside the transaction that loaded the hold. Making
-     * it EAGER would drag the seat rows on every findById, including the
-     * booking path that only needs the ids.
+     * it EAGER would drag the seat rows on every findById.
      */
     @ElementCollection
     @CollectionTable(
@@ -60,6 +72,22 @@ public class SeatHold {
             joinColumns = @JoinColumn(name = "hold_id")
     )
     private Set<HoldSeat> seats = new LinkedHashSet<>();
+
+    /**
+     * Why the price is what it is, frozen with it. One row per rule including
+     * the ones that landed in a zero band, so a hold taken before a rule
+     * existed stays distinguishable from one where the rule did not fire.
+     *
+     * A Set with no ordering guarantee, like seats. getPriceRules sorts by
+     * sortOrder, so display order is decided in one place rather than relying
+     * on whatever order Postgres returns.
+     */
+    @ElementCollection
+    @CollectionTable(
+            name = "hold_price_rule",
+            joinColumns = @JoinColumn(name = "hold_id")
+    )
+    private Set<HoldPriceRule> priceRules = new LinkedHashSet<>();
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -90,27 +118,42 @@ public class SeatHold {
     /**
      * The only way to create a hold.
      *
+     * The breakdown arrives already computed, and this is where it stops being
+     * a calculation and becomes a record. Every seat gets the same adjusted
+     * price because a hold covers exactly one tier: seats on a hold share a
+     * row, and tier is assigned by row band. It is still written per seat, so
+     * the schema stays correct if either of those rules ever changes.
+     *
      * The empty check is a backstop, not the error path: CreateHoldRequest's
      * @Size(min = 1, max = 6) rejects it over HTTP long before this runs, so
      * this firing means a bug in a caller rather than a user mistake. A hold
      * with no seats is nonsense and should be unconstructable.
      */
     public static SeatHold claim(Long showtimeId, Collection<Long> seatIds,
-                                 Instant now, Duration ttl) {
+                                 PriceBreakdown price, Instant now, Duration ttl) {
         if (seatIds == null || seatIds.isEmpty()) {
             throw new IllegalArgumentException("A hold must cover at least one seat");
         }
 
         SeatHold hold = new SeatHold();
         hold.showtimeId = showtimeId;
+        hold.basePriceMinor = price.basePriceMinor();
         hold.createdAt = now;
         hold.expiresAt = now.plus(ttl);
+
         for (Long seatId : seatIds) {
             /* The showtime is copied into each child so the row satisfies the
                composite foreign key. The parent is the only thing that knows
                it, which is why the children are built here and nowhere else. */
-            hold.seats.add(HoldSeat.of(seatId, showtimeId));
+            hold.seats.add(HoldSeat.of(seatId, showtimeId, price.adjustedPriceMinor()));
         }
+
+        for (PriceRule rule : price.rules()) {
+            hold.priceRules.add(HoldPriceRule.of(
+                    rule.code(), rule.label(),
+                    rule.basisPoints(), rule.adjustmentMinor(), rule.sortOrder()));
+        }
+
         return hold;
     }
 
@@ -155,6 +198,7 @@ public class SeatHold {
 
     public UUID getId() { return id; }
     public Long getShowtimeId() { return showtimeId; }
+    public int getBasePriceMinor() { return basePriceMinor; }
     public Instant getExpiresAt() { return expiresAt; }
     public long getVersion() { return version; }
 
@@ -167,5 +211,21 @@ public class SeatHold {
      */
     public Set<HoldSeat> getSeats() {
         return Set.copyOf(seats);
+    }
+
+    /** Ordered for display, so no caller has to know about sortOrder. */
+    public List<HoldPriceRule> getPriceRules() {
+        return priceRules.stream()
+                .sorted(Comparator.comparingInt(HoldPriceRule::getSortOrder))
+                .toList();
+    }
+
+    /**
+     * Derived, never stored. The same rule as Booking.totalMinor: a stored
+     * total is a second place for the truth to live and a chance for it to
+     * drift from the lines it summarises.
+     */
+    public int totalMinor() {
+        return seats.stream().mapToInt(HoldSeat::getPriceMinor).sum();
     }
 }

@@ -9,6 +9,17 @@ import jakarta.persistence.Table;
 
 import java.time.Instant;
 
+/**
+ * Nothing reads this entity. It exists so that
+ * spring.jpa.hibernate.ddl-auto=validate has something to check the showtime
+ * table against at startup, which is exactly what caught the dropped column
+ * when V12 ran. Every read goes through ShowtimeQuery in plain SQL, because
+ * the list response is a join plus aggregates and matches no entity.
+ *
+ * No priceMinor since V12. A seat's price comes from hall_class_tier_price,
+ * keyed on the screen's hall class and the seat's tier, so a price on the
+ * screening as well would be a second place for the truth to live.
+ */
 @Entity
 @Table(name = "showtime")
 public class Showtime {
@@ -26,9 +37,6 @@ public class Showtime {
     @Column(name = "starts_at", nullable = false)
     private Instant startsAt;
 
-    @Column(name = "price_minor", nullable = false)
-    private int priceMinor;
-
     @Column(nullable = false)
     private String currency;
 
@@ -39,6 +47,5 @@ public class Showtime {
     public Long getFilmId() { return filmId; }
     public Long getScreenId() { return screenId; }
     public Instant getStartsAt() { return startsAt; }
-    public int getPriceMinor() { return priceMinor; }
     public String getCurrency() { return currency; }
 }

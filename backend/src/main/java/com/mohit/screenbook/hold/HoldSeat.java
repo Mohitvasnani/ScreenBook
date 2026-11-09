@@ -32,21 +32,41 @@ public class HoldSeat {
     @Column(name = "showtime_id", nullable = false, updatable = false)
     private Long showtimeId;
 
+    /**
+     * The price quoted for this seat, frozen at the moment of the claim. This
+     * is what confirm charges, rather than working the price out again: once
+     * occupancy is an input, recomputing at confirm can give a different
+     * answer from the one the customer was shown.
+     *
+     * Per seat rather than once on the parent, even though a hold covers
+     * exactly one tier today. That property is not a rule anyone wrote down,
+     * it falls out of two unrelated ones: seats on a hold share a row, and
+     * tier is assigned by row band. Storing it here means the schema stays
+     * correct if either of those ever changes.
+     */
+    @Column(name = "price_minor", nullable = false, updatable = false)
+    private int priceMinor;
+
     protected HoldSeat() {
         // Hibernate builds instances by reflection and needs a no-arg
         // constructor. protected keeps application code out of it.
     }
 
     /* Package-private: a HoldSeat is only ever built by SeatHold.claim. */
-    static HoldSeat of(Long seatId, Long showtimeId) {
+    static HoldSeat of(Long seatId, Long showtimeId, int priceMinor) {
         HoldSeat held = new HoldSeat();
         held.seatId = seatId;
         held.showtimeId = showtimeId;
+        held.priceMinor = priceMinor;
         return held;
     }
 
     public Long getSeatId() {
         return seatId;
+    }
+
+    public int getPriceMinor() {
+        return priceMinor;
     }
 
     /* Package-private. Nothing outside this package has a reason to read a
@@ -55,6 +75,15 @@ public class HoldSeat {
         return showtimeId;
     }
 
+    /**
+     * Identity is (seat, showtime), deliberately excluding the price, for the
+     * same reason BookingSeat excludes it. Those two are what the table's
+     * primary key is built on, so two elements agreeing on them are the same
+     * row as far as Postgres is concerned. Including the price would let this
+     * Set hold two elements the database then rejects as duplicates, turning a
+     * bug that fails fast in memory into one that fails at flush time with a
+     * constraint violation.
+     */
     @Override
     public boolean equals(Object other) {
         if (this == other) return true;

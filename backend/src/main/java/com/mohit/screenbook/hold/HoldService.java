@@ -4,11 +4,15 @@ import com.mohit.screenbook.catalogue.SeatMapQuery;
 import com.mohit.screenbook.catalogue.SeatRepository;
 import com.mohit.screenbook.catalogue.SeatStatus;
 import com.mohit.screenbook.catalogue.SeatView;
+import com.mohit.screenbook.catalogue.ShowtimePricingInputs;
+import com.mohit.screenbook.catalogue.ShowtimeQuery;
 import com.mohit.screenbook.common.HoldAlreadyConvertedException;
 import com.mohit.screenbook.common.NotFoundException;
 import com.mohit.screenbook.common.SeatsUnavailableException;
 import com.mohit.screenbook.common.UnavailableSeat;
 import com.mohit.screenbook.common.ValidationFailedException;
+import com.mohit.screenbook.pricing.PriceBreakdown;
+import com.mohit.screenbook.pricing.PricingRules;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,28 +22,34 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class HoldService {
 
     private final SeatRepository seats;
     private final SeatMapQuery seatMap;
+    private final ShowtimeQuery showtimes;
     private final SeatHoldRepository holds;
+    private final PricingRules pricing;
     private final Clock clock;
     private final Duration ttl;
     private final int guestMaxSeats;
     private final int memberMaxSeats;
 
-    HoldService(SeatRepository seats, SeatMapQuery seatMap, SeatHoldRepository holds,
-                Clock clock,
+    HoldService(SeatRepository seats, SeatMapQuery seatMap, ShowtimeQuery showtimes,
+                SeatHoldRepository holds, PricingRules pricing, Clock clock,
                 @Value("${screenbook.hold.ttl-seconds}") long ttlSeconds,
                 @Value("${screenbook.holds.max-seats-guest}") int guestMaxSeats,
                 @Value("${screenbook.holds.max-seats-member}") int memberMaxSeats) {
         this.seats = seats;
         this.seatMap = seatMap;
+        this.showtimes = showtimes;
         this.holds = holds;
+        this.pricing = pricing;
         this.clock = clock;
         this.ttl = Duration.ofSeconds(ttlSeconds);
         this.guestMaxSeats = guestMaxSeats;
@@ -49,11 +59,11 @@ public class HoldService {
     /**
      * Claims adjacent seats for the TTL, all or nothing.
      *
-     * Locks first, then checks, then inserts, all in one transaction. Locking
-     * the seat rows before reading availability means that between our check
-     * and our insert, no other transaction can run its own check for those
-     * seats. A loser blocks on the lock, wakes up after the winner commits,
-     * sees the seats are now HELD, and gets a 409.
+     * Locks first, then checks, then prices, then inserts, all in one
+     * transaction. Locking the seat rows before reading availability means
+     * that between our check and our insert, no other transaction can run its
+     * own check for those seats. A loser blocks on the lock, wakes up after
+     * the winner commits, sees the seats are now HELD, and gets a 409.
      *
      * The locks are taken in ascending seat id order, and that is the whole
      * reason this does not deadlock. Two requests for [5, 9] and [9, 5] taken
@@ -106,7 +116,7 @@ public class HoldService {
                             "No seat with id %d.".formatted(seatId)));
         }
 
-        // 2. Read availability and prices inside the locks, in one query.
+        // 2. Read availability and listed prices inside the locks, in one query.
         List<SeatView> rows = seatMap.seatsByIds(showtimeId, ordered);
 
         /* The view joins seat to showtime on screen_id, so a seat that is not
@@ -133,13 +143,30 @@ public class HoldService {
             throw new SeatsUnavailableException(seatIds.size(), unavailable);
         }
 
-        // 3. Insert. The locks are released when this transaction commits.
+        // 3. Price it, freeze it, insert. The locks release when this commits.
         Instant now = clock.instant();
-        SeatHold hold = holds.save(SeatHold.claim(showtimeId, ordered, now, ttl));
 
+        /* Occupancy is read here, inside the locks and before the insert, so
+           the figure that sets the price is the one that was true at the
+           moment of the claim. Reading it earlier would price against a house
+           that has since filled; reading it after the insert would count this
+           request's own seats and let a customer inflate their own price. */
+        ShowtimePricingInputs inputs = showtimes.pricingInputsFor(showtimeId);
+
+        /* Every row carries the same listed price, because a hold covers one
+           tier, so the first is the base for the whole hold. */
+        PriceBreakdown price = pricing.priceFor(
+                rows.getFirst().priceMinor(),
+                inputs.seatsTaken(), inputs.seatsTotal(),
+                inputs.startsAt(), now);
+
+        SeatHold hold = holds.save(
+                SeatHold.claim(showtimeId, ordered, price, now, ttl));
+
+        Map<Long, Integer> frozen = frozenPrices(hold);
         return new HoldResponse(
                 hold.getId(), showtimeId,
-                seatViews(rows), total(rows), rows.getFirst().currency(),
+                seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
                 hold.getExpiresAt(), ttl.toSeconds());
     }
 
@@ -151,11 +178,11 @@ public class HoldService {
      * has to be read before the transaction ends. Reading it here rather than
      * in the controller is what keeps that true.
      *
-     * The prices come from the view, so they are today's prices rather than the
-     * ones quoted when the hold was taken. Those only differ if a showtime's
-     * base price changes mid-hold, and a hold lasts five minutes. The booking
-     * is where the price is frozen, because that is the one that records what
-     * was charged.
+     * The prices come off the hold, not the view. That is the point of this
+     * wave: the view's price moves with occupancy, so a checkout screen
+     * reloaded four minutes in would otherwise quote a different number from
+     * the one that was agreed. The view is still read, because it is the only
+     * thing that knows a seat's row and number.
      */
     @Transactional(readOnly = true)
     public HoldDetailResponse get(UUID holdId) {
@@ -175,9 +202,10 @@ public class HoldService {
         }
 
         Instant now = clock.instant();
+        Map<Long, Integer> frozen = frozenPrices(hold);
         return new HoldDetailResponse(
                 hold.getId(), hold.getShowtimeId(),
-                seatViews(rows), total(rows), rows.getFirst().currency(),
+                seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
                 hold.getExpiresAt(), hold.remainingSeconds(now),
                 apiStatus(hold.stateAt(now)));
     }
@@ -225,6 +253,9 @@ public class HoldService {
      *
      * Duplicates are already rejected above, so a run of n distinct seat
      * numbers is contiguous exactly when max - min + 1 == n.
+     *
+     * Same row also means same tier, because tier is assigned by row band.
+     * That is what makes one price breakdown correct for a whole hold.
      */
     private static void requireAdjacent(List<SeatView> rows) {
         if (rows.size() == 1) return;
@@ -242,18 +273,27 @@ public class HoldService {
         }
     }
 
-    /* Rows arrive ordered by row then seat number from the query, so this
-       preserves display order rather than deciding it. */
-    private static List<HeldSeatView> seatViews(List<SeatView> rows) {
+    /* Labels come from the view, prices come from the hold. The view is the
+       only thing that knows a seat's row and number; the hold is the only
+       thing that knows what was quoted. Rows arrive ordered by row then seat
+       number from the query, so this preserves display order rather than
+       deciding it. */
+    private static List<HeldSeatView> seatViews(List<SeatView> rows,
+                                                Map<Long, Integer> frozen) {
         return rows.stream()
                 .map(row -> new HeldSeatView(
                         row.id(), row.rowLabel(), row.seatNumber(),
-                        row.tier(), row.priceMinor()))
+                        row.tier(), frozen.get(row.id())))
                 .toList();
     }
 
-    private static int total(List<SeatView> rows) {
-        return rows.stream().mapToInt(SeatView::priceMinor).sum();
+    private static Map<Long, Integer> frozenPrices(SeatHold hold) {
+        return hold.getSeats().stream()
+                .collect(Collectors.toMap(HoldSeat::getSeatId, HoldSeat::getPriceMinor));
+    }
+
+    private static int total(Map<Long, Integer> frozen) {
+        return frozen.values().stream().mapToInt(Integer::intValue).sum();
     }
 
     private static HoldStatus apiStatus(SeatHold.State state) {
