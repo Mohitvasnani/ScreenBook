@@ -128,7 +128,8 @@ public class SecurityConfig {
                                    do themselves. Leaving them open also keeps
                                    Swagger UI and curl usable against a public
                                    demo API, which is a deliberate trade. */
-                                "/api/showtimes/**", "/api/holds/**", "/api/bookings/**",
+                                "/api/showtimes/**", "/api/holds/**", "/api/bookings/**",   "/api/auth/signup", "/api/auth/login",
+                                "/api/auth/forgot-password", "/api/auth/reset-password",
                                 /* Credentials are in the body here, so there is
                                    no ambient authority to forge. The residual
                                    risk is login CSRF, forcing a victim into the

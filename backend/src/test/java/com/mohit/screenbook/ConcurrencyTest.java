@@ -360,10 +360,12 @@ class ConcurrencyTest {
 
     private Target someAvailableSeat() {
         return jdbc.sql("""
-                        SELECT showtime_id, seat_id
-                        FROM seat_availability
-                        WHERE status = 'AVAILABLE'
-                        LIMIT 1
+                         SELECT sa.showtime_id, sa.seat_id
+                                                FROM seat_availability sa
+                                                JOIN showtime st ON st.id = sa.showtime_id
+                                                WHERE sa.status = 'AVAILABLE'
+                                                  AND st.starts_at > now()
+                                                LIMIT 1
                         """)
                 .query((rs, rowNum) -> new Target(
                         rs.getLong("showtime_id"), rs.getLong("seat_id")))
@@ -391,16 +393,18 @@ class ConcurrencyTest {
      */
     private List<Target> availableSeatsInOneShowtime(int howMany) {
         List<Long> seatIds = jdbc.sql("""
-                        WITH runs AS (
-                            SELECT showtime_id,
-                                   row_label,
-                                   seat_id,
-                                   seat_number,
-                                   seat_number - row_number() OVER (
-                                       PARTITION BY showtime_id, row_label
-                                       ORDER BY seat_number) AS run_key
-                            FROM seat_availability
-                            WHERE status = 'AVAILABLE')
+                                                WITH runs AS (
+                                                                                   SELECT sa.showtime_id,
+                                                                                          sa.row_label,
+                                                                                          sa.seat_id,
+                                                                                          sa.seat_number,
+                                                                                          sa.seat_number - row_number() OVER (
+                                                                                              PARTITION BY sa.showtime_id, sa.row_label
+                                                                                              ORDER BY sa.seat_number) AS run_key
+                                                                                   FROM seat_availability sa
+                                                                                   JOIN showtime st ON st.id = sa.showtime_id
+                                                                                   WHERE sa.status = 'AVAILABLE'
+                                                                                     AND st.starts_at > now())
                         SELECT array_agg(seat_id ORDER BY seat_number) AS seat_ids
                         FROM runs
                         GROUP BY showtime_id, row_label, run_key
@@ -423,11 +427,14 @@ class ConcurrencyTest {
     /** The run query groups by showtime, so every seat in it shares this one. */
     private long showtimeOf(long seatId) {
         return jdbc.sql("""
-                        SELECT showtime_id
-                        FROM seat_availability
-                        WHERE seat_id = :seatId AND status = 'AVAILABLE'
-                        ORDER BY showtime_id
-                        LIMIT 1
+                                               SELECT sa.showtime_id
+                                                       FROM seat_availability sa
+                                                       JOIN showtime st ON st.id = sa.showtime_id
+                                                       WHERE sa.seat_id = :seatId
+                                                         AND sa.status  = 'AVAILABLE'
+                                                         AND st.starts_at > now()
+                                                       ORDER BY sa.showtime_id
+                                                       LIMIT 1
                         """)
                 .param("seatId", seatId)
                 .query(Long.class)

@@ -53,4 +53,12 @@ public class AppUser {
     public String getPasswordHash() { return passwordHash; }
     public String getDisplayName() { return displayName; }
     public Instant getCreatedAt() { return createdAt; }
+    /**
+     * The only way a password changes. Takes the hash, never the password, so
+     * nothing outside AuthService and the reset flow can accidentally store a
+     * plaintext value in this column.
+     */
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
 }

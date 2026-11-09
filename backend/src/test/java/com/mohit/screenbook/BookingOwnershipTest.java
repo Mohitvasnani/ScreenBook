@@ -174,10 +174,12 @@ class BookingOwnershipTest {
 
     private Target someAvailableSeat() {
         return jdbc.sql("""
-                        SELECT showtime_id, seat_id
-                        FROM seat_availability
-                        WHERE status = 'AVAILABLE'
-                        LIMIT 1
+                         SELECT sa.showtime_id, sa.seat_id
+                                                       FROM seat_availability sa
+                                                       JOIN showtime st ON st.id = sa.showtime_id
+                                                       WHERE sa.status = 'AVAILABLE'
+                                                         AND st.starts_at > now()
+                                                       LIMIT 1
                         """)
                 .query((rs, rowNum) -> new Target(
                         rs.getLong("showtime_id"), rs.getLong("seat_id")))

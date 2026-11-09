@@ -107,15 +107,17 @@ class HoldRulesTest {
      */
     private Run fourInARow() {
         return jdbc.sql("""
-                        WITH candidate AS (
-                            SELECT showtime_id, row_label
-                            FROM seat_availability
-                            WHERE status = 'AVAILABLE'
-                              AND seat_number BETWEEN 1 AND 4
-                            GROUP BY showtime_id, row_label
-                            HAVING count(*) = 4
-                            ORDER BY showtime_id, row_label
-                            LIMIT 1)
+                                                WITH candidate AS (
+                                                                SELECT sa.showtime_id, sa.row_label
+                                                                FROM seat_availability sa
+                                                                JOIN showtime st ON st.id = sa.showtime_id
+                                                                WHERE sa.status = 'AVAILABLE'
+                                                                  AND sa.seat_number BETWEEN 1 AND 4
+                                                                  AND st.starts_at > now()
+                                                                GROUP BY sa.showtime_id, sa.row_label
+                                                                HAVING count(*) = 4
+                                                                ORDER BY sa.showtime_id, sa.row_label
+                                                                LIMIT 1)
                         SELECT sa.showtime_id,
                                sa.row_label,
                                array_agg(sa.seat_id ORDER BY sa.seat_number) AS seat_ids

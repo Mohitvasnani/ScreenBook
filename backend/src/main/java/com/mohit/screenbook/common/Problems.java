@@ -22,6 +22,7 @@ public final class Problems {
     public static final String EMAIL_TAKEN = BASE + "/email-taken";
     public static final String INVALID_REFRESH_TOKEN = BASE + "/invalid-refresh-token";
     public static final String SHOWTIME_STARTED = BASE + "/showtime-started";
+    public static final String INVALID_RESET_TOKEN = BASE + "/invalid-reset-token";
     private Problems() {
     }
 }
