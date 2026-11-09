@@ -43,9 +43,16 @@ dependencies {
     // itself rather than by a third-party DSL. The resource-server filter does
     // the verifying; a custom resolver points it at the cookie instead of the
     // Authorization header.
+
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 
+    // Boot 4 split autoconfiguration into per-feature modules. RestClient the
+    // class ships with spring-web, but the autoconfiguration that creates the
+    // RestClient.Builder bean lives here. Without it the app compiles, the
+    // tests pass (the -test starter pulls it in transitively) and the context
+    // fails to refresh at runtime. BrevoMailer is the only consumer.
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
 }
 
 
