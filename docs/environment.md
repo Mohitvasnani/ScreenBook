@@ -1,15 +1,16 @@
 # Environment variables
 
-Four places. Neon is the odd one out: it supplies values rather than consuming
-them.
+Five places. Neon and Brevo are the odd ones out: they supply values rather
+than consuming them.
 
 | Where | Variables |
 |---|---|
 | Frontend, local | `NEXT_PUBLIC_API_MODE` |
 | Frontend, Vercel | `NEXT_PUBLIC_API_MODE`, `API_ORIGIN` |
 | Backend, local | `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE` |
-| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE` |
+| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE`, `MAIL_PROVIDER`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `RESET_LINK_BASE` |
 | Neon | none |
+| Brevo | none; it supplies the API key |
 
 Live URLs: frontend <https://screenbook.vercel.app>, API
 <https://cinebook-67pa.onrender.com>.
@@ -88,6 +89,64 @@ Every variable, with the default it falls back to:
 | `COOKIES_SECURE` | **none** | `true` anywhere served over HTTPS, `false` on local plain HTTP |
 | `SPRINGDOC_ENABLED` | `true` | `false` hides Swagger UI and `/v3/api-docs` |
 | `SCREENBOOK_CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Only for third-party clients of the public API, not for this frontend |
+| `MAIL_PROVIDER` | `log` | `log` prints reset links to the console. `brevo` sends them |
+| `BREVO_API_KEY` | empty | Required when `MAIL_PROVIDER=brevo`, ignored otherwise |
+| `BREVO_SENDER_EMAIL` | empty | Required when `MAIL_PROVIDER=brevo`. Must be a verified sender |
+| `BREVO_SENDER_NAME` | `ScreenBook` | Display name on the From line |
+| `RESET_LINK_BASE` | `http://localhost:3000/reset-password` | A **frontend** URL. The route the emailed link points at |
+
+### Sending email
+
+`MAIL_PROVIDER` picks which `Mailer` bean exists, and `log` is the default so a
+fresh clone runs the whole password reset flow with no account anywhere: the
+link is printed to the application log and is clickable in a terminal.
+
+That default is chosen on which failure is worse. Defaulting to a real provider
+means a developer's laptop sends mail to real addresses. Defaulting to `log`
+means a production deployment that quietly sends nothing, which is why
+`MAIL_PROVIDER=brevo` is listed in the Render block below rather than left to be
+discovered.
+
+`BREVO_API_KEY` and `BREVO_SENDER_EMAIL` are only read when the Brevo bean
+exists, and it refuses to start if either is blank. Checking at startup matters
+here more than usual, because a send that fails at request time is deliberately
+swallowed: `PasswordResetService` catches mail failures so that a provider
+outage cannot make a registered address answer differently from an unknown one.
+A misconfigured provider would otherwise be invisible.
+
+Two notes that cost an afternoon if missed. The key must be a **v3 API key**
+from SMTP and API, then API Keys; an SMTP key looks similar and is rejected.
+And Brevo was chosen over SendGrid specifically because it verifies a single
+sender address, so no owned domain and no DNS records are needed, which is the
+difference between shipping this and waiting on a domain.
+
+`RESET_LINK_BASE` is a frontend URL, not an API one. The backend writes it into
+the email and the frontend owns that route, so it changes per environment and
+has no sensible shared default.
+
+#### Brevo's authorised IPs must be off
+
+Brevo can restrict API calls to a list of allowed source addresses, and it
+switches that on by itself the first time it sees an unrecognised one. The
+error is a 401 whose body names the address and links to
+<https://app.brevo.com/security/authorised_ips>.
+
+Turn the restriction off rather than adding an address. Render's outbound
+traffic goes through IP ranges shared with every other service in the region,
+free plans can be handed a /24, and Render renumbered those ranges in November
+2025, retiring the individual addresses that existed before. Exclusive static
+outbound IPs need a Pro plan. So an allowlist here is not security, it is a
+trap: the day the range changes, resets stop working.
+
+That failure would also be invisible, because `PasswordResetService` swallows
+mail failures so a provider outage cannot make a registered address answer
+differently from an unknown one. The only sign is an ERROR line from
+`PasswordResetService`, which is worth knowing before you go looking for a bug
+in the token table.
+
+The trade is that the API key becomes the only credential protecting sending,
+which is why it lives in a Render environment variable and has never been in a
+tracked file.
 
 ### The two with no default
 
@@ -137,9 +196,16 @@ there are never evaluated during a test run.
 DB_URL          jdbc:postgresql://ep-blue-star-ban44ub9.c-8.eu-central-1.aws.neon.tech/neondb?sslmode=require
 DB_USERNAME     neondb_owner
 DB_PASSWORD     (from the Neon connection string)
-JWT_SECRET      (generated, never reused from anywhere else)
-COOKIES_SECURE  true
+JWT_SECRET          (generated, never reused from anywhere else)
+COOKIES_SECURE      true
+MAIL_PROVIDER       brevo
+BREVO_API_KEY       (v3 API key, not an SMTP key)
+BREVO_SENDER_EMAIL  (the address verified as a single sender in Brevo)
+RESET_LINK_BASE     https://screenbook.vercel.app/reset-password
 ```
+
+Leave `MAIL_PROVIDER` unset locally. Development keeps printing the link to the
+console, which is faster than an inbox and needs no account.
 
 `SCREENBOOK_CORS_ALLOWED_ORIGINS` is no longer needed for the frontend to work,
 because the frontend is same-origin now. Keep it only to let browser clients on

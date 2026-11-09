@@ -6,7 +6,8 @@ construction rather than by discovery.
 
 - Base path: `/api`
 - All timestamps ISO-8601 UTC with a trailing `Z`
-- All money in integer minor units (pence), never floats
+- All money in integer minor units (paise), never floats. Prices are INR,
+  calibrated against published Jaipur cinema prices
 - Errors use RFC 9457 problem details (`application/problem+json`)
 - Hold TTL: 300 seconds
 - Up to 3 seats per hold as a guest, 6 signed in, claimed all or nothing
@@ -18,10 +19,101 @@ construction rather than by discovery.
   token in a response body
 - Unsafe requests to `/api/auth/refresh`, `/api/auth/logout` and `/api/me/**`
   carry a CSRF token
+- Prices move with demand. The showtimes list and the seat map quote live
+  prices; a hold freezes its price and the booking charges that frozen figure
 
-Thirteen endpoints. Seven are the booking flow: four doing the work, two `GET`s
+Fifteen endpoints. Seven are the booking flow: four doing the work, two `GET`s
 that exist so the client's URLs survive a page refresh, one releasing a hold
-early. The other six are accounts, added in wave 3.
+early. The other eight are accounts: six added in wave 3, and password reset in
+wave 4.
+
+---
+
+## Pricing
+
+Every price in this API is a listed price moved by rules. Both halves are
+server side; the client never multiplies anything.
+
+### The listed price
+
+A hand-set table, one row per hall class and seat tier. Nothing computes these.
+
+| Hall class | Normal | Premium | Executive |
+|---|---|---|---|
+| Standard (Screens 1 to 3) | 20000 | 35000 | 50000 |
+| Luxury (Screen 4) | 30000 | 55000 | 80000 |
+
+Deliberately not base-plus-uplift. One global uplift means a fixed gap is a
+steep ladder in a 200 rupee hall and nearly flat in a 400 rupee one, and
+percentage uplifts fix the ratio at the cost of prices like 437.50. Listing
+them is what cinemas actually publish, and every figure is a number a human
+picked. Both ladders are about 2.5 times bottom to top, which is the spread a
+Jaipur single screen runs across its named seat classes.
+
+Every figure is a multiple of 50 rupees, which is why whole-percent rules below
+never produce a fraction of a rupee.
+
+### The rules
+
+Four of them, each a percentage of the seat's listed price, expressed in basis
+points. 10000 basis points is 100%.
+
+| Rule | Band | Adjustment |
+|---|---|---|
+| `OCCUPANCY` | 80% or more of the house taken | +2000 |
+| | 50% to 79% | +1000 |
+| | under 50% | 0 |
+| `LEAD_TIME` | under 6 hours to the screening | +1000 |
+| | under 48 hours | +500 |
+| | 48 hours or more | 0 |
+| `TIME_OF_DAY` | starts 17:00 to 22:59 local | +500 |
+| | otherwise | 0 |
+| `DAY_OF_WEEK` | Friday or Saturday local | +500 |
+| | otherwise | 0 |
+
+**They add up, they do not multiply.** +2000, +1000, +500 and +500 means +4000
+basis points of the listed price, not a product of four factors. Each line of a
+breakdown is then independently true; multiplied, the figure beside a rule
+would depend on which rules fired before it, so a breakdown would only be
+readable in one particular order.
+
+**Each line is rounded on its own**, half away from zero, and then summed.
+Rounding only the total would leave the lines not adding up to the figure
+printed above them.
+
+**Occupancy counts booked and live-held seats**, measured before the request's
+own seats are written, so nobody can inflate their own price. It is read from
+the same rows the seat map renders, so the number that sets the price cannot
+disagree with what a customer is looking at.
+
+**Local means `Asia/Kolkata`**, from configuration. `startsAt` is an instant
+and "Friday evening" is a local fact, so without an explicit zone a server
+running UTC would price a screening differently from a laptop.
+
+**The total is capped at +4000 basis points.** The four rules sum to exactly
+that, so the cap cannot fire as configured. It exists so a mistyped band cannot
+produce a four-figure ticket, and because a legal ceiling has to be
+expressible: several Indian states cap cinema ticket prices by statute. If it
+ever fires it appears as its own `CAP` line with a negative adjustment, rather
+than silently shrinking the total, so a breakdown always sums to the price
+charged.
+
+Worst case on a Standard Normal seat, a full house on a Friday evening three
+hours before the screening: 20000 becomes 28000.
+
+### Live versus frozen
+
+The showtimes list and the seat map quote **live** prices. They move as the
+house fills and the screening approaches, and nothing is promised.
+
+`POST /api/holds` **freezes** the price. The figure quoted in that response,
+and the breakdown explaining it, are stored on the hold and are what
+`POST /api/bookings` charges. Confirm never recomputes a price.
+
+That is the whole reason the freeze exists. Once occupancy is an input, reading
+the price a second time gives a different answer: five seats booked by somebody
+else while a customer types their email can cross an occupancy band. Without
+the freeze they would be charged a number they were never shown.
 
 ---
 
@@ -39,8 +131,9 @@ List all showtimes.
     "screenName": "Screen 1",
     "startsAt": "2026-11-02T19:30:00Z",
     "runtimeMinutes": 128,
-    "priceMinor": 1250,
-    "currency": "GBP",
+    "basePriceMinor": 20000,
+    "priceMinor": 28000,
+    "currency": "INR",
     "seatsAvailable": 87,
     "seatsTotal": 120
   }
@@ -49,10 +142,24 @@ List all showtimes.
 
 No pagination. The dataset is small and bounded by what a cinema screens in a week.
 
-`priceMinor` here is the *lowest* price for the screening, which is the Normal
-tier, since Normal has an uplift of zero. It exists so the list can show "from
-£11.50" without fetching 120 seats per showtime. The authoritative per-seat
-price comes from the seat map.
+Only screenings that have not started are listed, on `starts_at > now()`. A
+screening disappears from this list and stops being claimable at the same
+instant.
+
+`priceMinor` is the cheapest seat **actually on sale** for the screening, which
+is the Normal tier after the rules. `basePriceMinor` is what that seat is
+listed at. Both are sent so a list can say "higher than usual" without doing
+arithmetic, and so the "from" figure is one somebody can really buy at: a
+headline price nobody can reach is the practice the CMA's pricing guidance is
+about.
+
+No rule breakdown here. Each screening has its own rules firing, so twelve rows
+would carry up to forty-eight explanation lines nobody reads, and two prices
+side by side already say what a list needs to say. The reasons live on the seat
+map and the checkout.
+
+`seatsAvailable` counts seats, not bookings. It is derived from
+`showtime_occupancy`, the same view the pricing rules read.
 
 ---
 
@@ -67,11 +174,20 @@ The seat map for one showtime.
   "showtimeId": 1,
   "seats": [
     { "id": 1001, "rowLabel": "A", "seatNumber": 1, "status": "AVAILABLE",
-      "tier": "NORMAL", "tierName": "Normal", "priceMinor": 1150, "currency": "GBP" },
+      "tier": "NORMAL", "tierName": "Normal",
+      "basePriceMinor": 20000, "priceMinor": 28000, "currency": "INR" },
     { "id": 1061, "rowLabel": "F", "seatNumber": 1, "status": "HELD",
-      "tier": "PREMIUM", "tierName": "Premium", "priceMinor": 1400, "currency": "GBP" },
+      "tier": "PREMIUM", "tierName": "Premium",
+      "basePriceMinor": 35000, "priceMinor": 49000, "currency": "INR" },
     { "id": 1097, "rowLabel": "I", "seatNumber": 1, "status": "BOOKED",
-      "tier": "EXECUTIVE", "tierName": "Executive", "priceMinor": 1650, "currency": "GBP" }
+      "tier": "EXECUTIVE", "tierName": "Executive",
+      "basePriceMinor": 50000, "priceMinor": 70000, "currency": "INR" }
+  ],
+  "priceRules": [
+    { "code": "OCCUPANCY",   "label": "Nearly full",  "basisPoints": 2000 },
+    { "code": "LEAD_TIME",   "label": "Under 6 hours to showtime", "basisPoints": 1000 },
+    { "code": "TIME_OF_DAY", "label": "Evening show", "basisPoints": 500 },
+    { "code": "DAY_OF_WEEK", "label": "Weekend",      "basisPoints": 500 }
   ]
 }
 ```
@@ -86,53 +202,76 @@ back. The rows are fixed by the seeded layout: A to E Normal, F to H Premium,
 I to J Executive. `tierName` is the display label, sent so the client does not
 hold its own mapping from code to human text.
 
-`priceMinor` is this seat's price for this showtime, resolved server-side as the
-showtime's base price plus the tier's uplift. The client never does that
-arithmetic, which is what stops the displayed price and the charged price from
-drifting apart.
+`basePriceMinor` is the seat's listed price for its hall class and tier.
+`priceMinor` is what it costs right now, after the rules. They are equal when
+no rule is firing. See [Pricing](#pricing) for the table and the bands.
 
-| Tier | Uplift over base |
-|---|---|
-| `NORMAL` | 0 |
-| `PREMIUM` | +250 |
-| `EXECUTIVE` | +500 |
+Neither is frozen. Both move as the house fills and the screening approaches; a
+price is only promised once a hold exists.
 
-`status`, `tier` and `priceMinor` all come from one view, `seat_availability`,
-so the seat map and the claim path cannot disagree about a seat:
+`priceRules` lists only the rules currently moving prices, and as percentages
+with no money attached. The map spans all three tiers, and each rule is a
+percentage of each tier's own listed price, so one shared money figure would be
+wrong for two of the three. The percentages are identical across tiers, so they
+are reported once and every seat carries its own price. The checkout gets the
+money version, where a hold is always one tier by construction.
+
+An empty `priceRules` is the ordinary case and means every seat is at its
+listed price. Render it as a single line, not an empty panel.
+
+`status`, `tier` and `basePriceMinor` all come from one view,
+`seat_availability`, so the seat map and the claim path cannot disagree about a
+seat:
 
 ```sql
-CREATE OR REPLACE VIEW seat_availability AS
+CREATE VIEW seat_availability AS
 SELECT st.id         AS showtime_id,
        s.id          AS seat_id,
        s.row_label   AS row_label,
        s.seat_number AS seat_number,
        CASE
-         WHEN EXISTS (SELECT 1 FROM booking b
-                       WHERE b.showtime_id = st.id
-                         AND b.seat_id     = s.id)
+         WHEN EXISTS (SELECT 1 FROM booking_seat bs
+                       WHERE bs.showtime_id = st.id
+                         AND bs.seat_id     = s.id)
            THEN 'BOOKED'
-         WHEN EXISTS (SELECT 1 FROM seat_hold h
-                       WHERE h.showtime_id = st.id
-                         AND h.seat_id     = s.id
-                         AND h.booked_at   IS NULL
-                         AND h.released_at IS NULL
-                         AND h.expires_at  > now())
+         WHEN EXISTS (SELECT 1 FROM hold_seat hs
+                       JOIN seat_hold h ON h.id = hs.hold_id
+                      WHERE hs.showtime_id = st.id
+                        AND hs.seat_id     = s.id
+                        AND h.booked_at    IS NULL
+                        AND h.released_at  IS NULL
+                        AND h.expires_at   > now())
            THEN 'HELD'
          ELSE 'AVAILABLE'
        END           AS status,
-       s.tier                               AS tier,
-       t.display_name                       AS tier_name,
-       st.price_minor + t.price_delta_minor AS price_minor,
-       st.currency                          AS currency
+       s.tier          AS tier,
+       t.display_name  AS tier_name,
+       sc.hall_class   AS hall_class,
+       p.price_minor   AS base_price_minor,
+       st.currency     AS currency
 FROM showtime st
-JOIN seat      s ON s.screen_id = st.screen_id
-JOIN seat_tier t ON t.code      = s.tier;
+JOIN screen    sc ON sc.id        = st.screen_id
+JOIN seat      s  ON s.screen_id  = st.screen_id
+JOIN seat_tier t  ON t.code       = s.tier
+JOIN hall_class_tier_price p
+                  ON p.hall_class = sc.hall_class
+                 AND p.tier       = s.tier;
 ```
 
 `status` is computed per request, never stored on a seat. The
 `h.expires_at > now()` predicate is doing the real work: an expired hold reads
 as AVAILABLE the instant it expires, with no sweeper involved. A scheduled job
 to delete old hold rows is then housekeeping, not correctness.
+
+The joins to `seat_tier` and `hall_class_tier_price` are inner joins, so a hall
+class missing a price for one of its tiers does not error, it makes those seats
+vanish from the seat map. A test asserts every combination has a row, because
+that failure is silent in production and loud at build time.
+
+`showtime_occupancy` sits on top of the same two child tables and answers "how
+full is this screening" for the pricing rules and for `seatsAvailable`. A test
+asserts the two agree, since one counts with correlated subqueries for speed
+and the other with a `CASE` per seat.
 
 ---
 
@@ -182,11 +321,25 @@ code. This project took the strict version deliberately.
   "holdId": "0199c3a4-7f21-7b8e-9d44-1a2b3c4d5e6f",
   "showtimeId": 1,
   "seats": [
-    { "seatId": 1002, "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "priceMinor": 1150 },
-    { "seatId": 1003, "rowLabel": "A", "seatNumber": 3, "tier": "NORMAL", "priceMinor": 1150 }
+    { "seatId": 1002, "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "priceMinor": 28000 },
+    { "seatId": 1003, "rowLabel": "A", "seatNumber": 3, "tier": "NORMAL", "priceMinor": 28000 }
   ],
-  "totalMinor": 2300,
-  "currency": "GBP",
+  "totalMinor": 56000,
+  "currency": "INR",
+  "pricing": {
+    "baseMinor": 20000,
+    "adjustedMinor": 28000,
+    "rules": [
+      { "code": "OCCUPANCY",   "label": "Nearly full",
+        "basisPoints": 2000, "adjustmentMinor": 4000 },
+      { "code": "LEAD_TIME",   "label": "Under 6 hours to showtime",
+        "basisPoints": 1000, "adjustmentMinor": 2000 },
+      { "code": "TIME_OF_DAY", "label": "Evening show",
+        "basisPoints": 500,  "adjustmentMinor": 1000 },
+      { "code": "DAY_OF_WEEK", "label": "Weekend",
+        "basisPoints": 500,  "adjustmentMinor": 1000 }
+    ]
+  },
   "expiresAt": "2026-10-31T08:12:00Z",
   "ttlSeconds": 300
 }
@@ -199,6 +352,27 @@ seat.
 `totalMinor` is the sum of the per-seat prices, computed server-side for the
 same reason each seat's price is: the client should never be the thing that
 decides what a basket costs.
+
+**Every price in this response is frozen.** It is the figure computed at the
+moment of the claim, and `POST /api/bookings` charges it rather than working
+the price out again. This is what lets a checkout screen promise the price is
+held.
+
+`pricing` explains how one seat reached its price: the listed figure, the
+adjusted figure, and one line per rule that moved it, in display order.
+`baseMinor` plus every `adjustmentMinor` equals `adjustedMinor`, always,
+including the `CAP` line if it ever appears.
+
+A hold covers exactly one tier, so one `pricing` block describes every seat on
+it. That is not a rule anyone wrote down: seats on a hold must share a row, and
+tier is assigned by row band, so it falls out of two unrelated rules. The price
+is still recorded per seat in the database, so the schema stays correct if
+either of those changes.
+
+Only the rules that moved the price appear. The bands that did not fire are
+stored, so a hold taken before a rule existed stays distinguishable from one
+where the rule simply did not fire, but a customer does not need to read
+"Occupancy, plus nothing". An empty `rules` means the listed price stands.
 
 Both `expiresAt` and `ttlSeconds` are returned. The first is authoritative and
 what gets displayed. The second lets the browser count down against its own
@@ -240,6 +414,29 @@ conflict UI and the server's rollback both depend on it. Four decisions in it:
   client that has not been updated is already broken; one break is better than a
   compatibility shim nobody will ever remove.
 
+**409** the screening has already started:
+
+```json
+{
+  "type": "https://screenbook.dev/problems/showtime-started",
+  "title": "Showtime started",
+  "status": 409,
+  "detail": "That screening has already started and can no longer be booked.",
+  "instance": "/api/holds"
+}
+```
+
+409 rather than 422, because the request was valid when the page was loaded and
+the world moved on. Same family as `seats-unavailable`: the client should
+refresh rather than correct anything. The boundary matches the showtimes list,
+so a screening stops being listed and stops being claimable at the same
+instant.
+
+Deliberately not applied to `POST /api/bookings`. A hold taken legitimately
+four minutes before the start can still be confirmed inside its five minute
+TTL, and blocking that would strand a customer who did nothing wrong. The TTL
+governs that window, not the start time.
+
 **422** validation failure: an empty `seatIds`, more than 6, a repeated seat,
 seats in different rows, or a gap between them.
 The detail names the cap when the cap is what failed.
@@ -262,11 +459,21 @@ when the user arrives by clicking.
   "holdId": "0199c3a4-7f21-7b8e-9d44-1a2b3c4d5e6f",
   "showtimeId": 1,
   "seats": [
-    { "seatId": 1002, "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "priceMinor": 1150 },
-    { "seatId": 1061, "rowLabel": "F", "seatNumber": 1, "tier": "PREMIUM", "priceMinor": 1400 }
+    { "seatId": 1002, "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "priceMinor": 28000 },
+    { "seatId": 1003, "rowLabel": "A", "seatNumber": 3, "tier": "NORMAL", "priceMinor": 28000 }
   ],
-  "totalMinor": 2550,
-  "currency": "GBP",
+  "totalMinor": 56000,
+  "currency": "INR",
+  "pricing": {
+    "baseMinor": 20000,
+    "adjustedMinor": 28000,
+    "rules": [
+      { "code": "OCCUPANCY",   "label": "Nearly full",
+        "basisPoints": 2000, "adjustmentMinor": 4000 },
+      { "code": "TIME_OF_DAY", "label": "Evening show",
+        "basisPoints": 500,  "adjustmentMinor": 1000 }
+    ]
+  },
   "expiresAt": "2026-10-31T08:12:00Z",
   "ttlSeconds": 180,
   "status": "ACTIVE"
@@ -278,10 +485,14 @@ for the whole hold rather than one per seat. `ttlSeconds` is the remaining time,
 so it shrinks across calls, and there is one deadline for every seat on the
 hold.
 
-The prices here are current, not the ones quoted when the hold was taken. They
-only differ if a showtime's base price changes mid-hold, and a hold lasts five
-minutes. The booking is where a price is frozen, because that is the record of
-what was charged.
+The prices and the breakdown are the ones frozen when the hold was taken, not
+today's. A checkout screen reloaded four minutes in shows the same figures as
+the original quote even if the house has filled since, which is the whole point
+of freezing them.
+
+The seats in this example are the two in the row above, so this is the same
+hold read back rather than a different one: one `pricing` block, because a hold
+is one tier.
 
 **404** unknown hold.
 
@@ -307,7 +518,7 @@ decide which to trust.
 
 `email` is optional and exists for guests, who otherwise have nothing but the
 reference. It is stored so a confirmation can be sent and is never used to
-decide who a booking belongs to, for the reason in section 13. A signed-in
+decide who a booking belongs to, for the reason in section 15. A signed-in
 booking is found by its account instead, and the account comes from the session
 cookie rather than the body, because a client-supplied user id is a
 client-supplied claim about who it is.
@@ -322,11 +533,11 @@ client-supplied claim about who it is.
   "screenName": "Screen 1",
   "startsAt": "2026-11-02T19:30:00Z",
   "seats": [
-    { "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "pricePaidMinor": 1150 },
-    { "rowLabel": "F", "seatNumber": 1, "tier": "PREMIUM", "pricePaidMinor": 1400 }
+    { "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "pricePaidMinor": 28000 },
+    { "rowLabel": "A", "seatNumber": 3, "tier": "NORMAL", "pricePaidMinor": 28000 }
   ],
-  "totalPaidMinor": 2550,
-  "currency": "GBP",
+  "totalPaidMinor": 56000,
+  "currency": "INR",
   "bookedAt": "2026-10-31T08:09:14Z"
 }
 ```
@@ -338,6 +549,18 @@ hold, so this either writes the whole booking or none of it.
 price change never rewrites a receipt. `totalPaidMinor` is their sum and is not
 stored anywhere: a stored total is a second place for the truth to live and a
 chance for it to drift from the lines it summarises.
+
+These are the figures frozen on the hold, copied across unchanged. This
+endpoint never recomputes a price, which is what makes the quoted price and the
+charged price the same number by construction rather than by coincidence. A
+test edits the listed price between hold and confirm and asserts the booking
+still charges what was quoted.
+
+No breakdown on the booking. `booking.hold_id` is `NOT NULL UNIQUE`, so the
+join back to the hold that explains the price is total and exact, and copying
+four immutable rows to a second table would buy nothing. The one cost is that
+purging old holds would strip the explanation off old receipts, and purging is
+not in scope.
 
 One currency for the booking, not per seat. One transaction, one currency.
 
@@ -528,7 +751,133 @@ in is not an error, the same way releasing a lapsed hold is not.
 
 ---
 
-## 12. `GET /api/me`
+## 12. `POST /api/auth/forgot-password`
+
+Starts a password reset.
+
+**Request**
+
+```json
+{ "email": "mo@example.com" }
+```
+
+**202**, with no body, whatever happened.
+
+That is the whole design of this endpoint. An address with no account, an
+address that asked a moment ago and is rate limited, and a real address that
+has just been mailed are **indistinguishable** from outside. A 404 for an
+unknown address would turn this into a way to test which addresses are
+registered, and unlike signup, which has to say when an address is taken to be
+usable at all, nothing here needs to leak that.
+
+Three consequences worth stating, because each one looks like a bug until you
+know why:
+
+- **The UI must not say "we sent you an email".** It says *if* that address has
+  an account, a link is on its way. Copy that is confident about sending is
+  copy that confirms the address exists.
+- **Mail failures are swallowed.** `PasswordResetService` catches them and
+  logs, because a provider outage would otherwise make a registered address
+  answer 500 while an unknown one still answers 202. The cost is real: somebody
+  whose mail genuinely failed is told to check their inbox and nothing arrives.
+  There is no way to tell them without telling an attacker the same thing.
+- **The rate limit is silent.** One request per account per 60 seconds, read
+  from `password_reset_token.requested_at`. The second request inside the
+  window sends nothing and still answers 202.
+
+The rate limit exists because this endpoint sends mail to an address the caller
+chooses, which makes it a way to flood somebody else's inbox and burn the
+sender's reputation. A timestamp the table already holds is the cheapest
+correct answer; it needs no Redis and no token bucket.
+
+The link points at `RESET_LINK_BASE` with the token in the query string. The
+token is 256 bits of url-safe Base64, stored only as a SHA-256 hash, and good
+for 30 minutes and one use.
+
+**422** a missing or malformed address. Shape only: nothing here validates that
+the address exists, because answering that is the thing this endpoint refuses
+to do.
+
+---
+
+## 13. `POST /api/auth/reset-password`
+
+Finishes it.
+
+**Request**
+
+```json
+{
+  "token": "mTtRbW0...",
+  "password": "a new password"
+}
+```
+
+No email field. The token names the account, and accepting an address here
+would mean either ignoring it or trusting it, and trusting it would let anyone
+holding any valid token reset anybody.
+
+`password` is 8 to 72 characters, the same bounds as signup. The ceiling is
+BCrypt's: it ignores everything past 72 bytes, so a longer password would have
+a silent dead tail.
+
+**204**, and it clears `sb_access` and `sb_refresh`.
+
+Clearing them is not tidiness. A reset revokes every refresh token the account
+has, including this browser's, so whatever the page is still holding is already
+dead and leaving it in place only produces a confusing 401 on the next request.
+
+Revoking every session is the point of that: a password change that leaves the
+old sessions alive is not a password change, because whoever prompted the reset
+is still signed in everywhere they already were.
+
+The reset does **not** sign you in. You have just chosen a password and typing
+it once more is a second of friction against the chance that the link was
+opened by the wrong person on a shared machine.
+
+**422** an invalid, expired or already-used token:
+
+```json
+{
+  "type": "https://screenbook.dev/problems/invalid-reset-token",
+  "title": "Invalid reset link",
+  "status": 422,
+  "detail": "That reset link is invalid or has expired. Request a new one.",
+  "instance": "/api/auth/reset-password"
+}
+```
+
+One problem type for all three cases, so a caller holding a dead link cannot
+tell which, and does not need to: the answer is the same either way, ask for
+another.
+
+Single use is enforced in one statement rather than a read then a write:
+
+```sql
+UPDATE password_reset_token
+   SET used_at = :now
+ WHERE token_hash = :hash
+   AND used_at    IS NULL
+   AND expires_at > :now
+RETURNING user_id
+```
+
+Two simultaneous presentations therefore produce one winner with no lock and no
+version column: the second updates zero rows and is rejected. `RETURNING` is
+what makes that possible; without it the check and the write would be separate
+statements and the gap between them is exactly the race.
+
+Unlike `refresh_token`, there is no reuse detection. Rotation has a legitimate
+client that has moved on to a replacement, so a second presentation means theft
+and is worth revoking every session over. A reset token has no such story: the
+password is already changed, so a repeat is a double-clicked link or a dead
+one, and revoking again buys nothing.
+
+**422** also covers a password outside the length bounds.
+
+---
+
+## 14. `GET /api/me`
 
 **200** the same body as signup. **401** with no valid session.
 
@@ -539,7 +888,7 @@ cache.
 
 ---
 
-## 13. `GET /api/me/bookings`
+## 15. `GET /api/me/bookings`
 
 Every booking belonging to the signed-in account, newest first.
 
@@ -625,7 +974,7 @@ Accounts change three things and nothing else.
 
 1. **The seat cap.** 3 seats per hold as a guest, 6 signed in.
 2. **Attribution.** A booking confirmed while signed in records `user_id` and
-   appears in section 13.
+   appears in section 15.
 3. **Nothing else.** Every endpoint in sections 1 to 7 behaves exactly as it did
    without a session. Guest checkout is not a fallback path, it is the default
    one.
@@ -653,12 +1002,11 @@ than gaps:
   duplicated hold costs the user nothing: the second request either returns a
   409 or claims seats that lapse in five minutes. A duplicated booking is a
   seat somebody paid for twice.
-- **Password reset.** Accounts can be created and signed into, but a forgotten
-  password cannot be recovered. It needs an email provider, which would be the
-  only third party this API depends on.
 - **Email verification.** Nothing proves an address belongs to whoever typed
-  it, which is why section 13 matches on `user_id` and `booking_by_email` goes
-  unused.
+  it, which is why section 15 matches on `user_id` and `booking_by_email` goes
+  unused. Completing a password reset does prove control of an address, but
+  only for the accounts that reset, so a feature built on it would work for a
+  minority of users and real verification would still be needed.
 - **Roles.** Every account is the same kind of account. There is no staff or
   admin view, so there is no authorisation model, only authentication.
 - **Payment.** `pricePaidMinor` records the price at booking time; no money moves.
