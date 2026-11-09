@@ -6,65 +6,103 @@
    export type HoldStatus = "ACTIVE" | "EXPIRED" | "CONVERTED";
    
    export interface Showtime {
-     id: number;
-     filmTitle: string;
-     screenName: string;
-     startsAt: string;
-     runtimeMinutes: number;
-     /* Integer minor units (pence). Never a float. */
-     priceMinor: number;
-     currency: string;
-     seatsAvailable: number;
-     seatsTotal: number;
-   }
+    id: number;
+    filmTitle: string;
+    screenName: string;
+    startsAt: string;
+    runtimeMinutes: number;
+    /* The cheapest seat's listed price, before any rule. Integer minor units. */
+    basePriceMinor: number;
+    /* The cheapest seat actually on sale, after the rules. Show this as the
+       "from" price: a headline price nobody can buy at is misleading. */
+    priceMinor: number;
+    currency: string;
+    seatsAvailable: number;
+    seatsTotal: number;
+  }
    
    export type Tier = "NORMAL" | "PREMIUM" | "EXECUTIVE";
    
    export interface Seat {
-     id: number;
-     rowLabel: string;
-     seatNumber: number;
-     status: SeatStatus;
-     tier: Tier;
-     /* Display label for the tier, sent by the server so the code-to-text
-        mapping lives in one place. */
-     tierName: string;
-     /* This seat's price for this showtime: the showtime's base plus the tier's
-        uplift, resolved server-side. Integer minor units (pence). */
-     priceMinor: number;
-     currency: string;
-   }
-   
-   export interface SeatMap {
-     showtimeId: number;
-     seats: Seat[];
-   }
+    id: number;
+    rowLabel: string;
+    seatNumber: number;
+    status: SeatStatus;
+    tier: Tier;
+    /* Display label for the tier, sent by the server so the code-to-text
+       mapping lives in one place. */
+    tierName: string;
+    /* The listed price for this hall class and tier, before any rule. */
+    basePriceMinor: number;
+    /* What it costs right now, after the rules. Equal to basePriceMinor when no
+       rule is firing. Not frozen: a price is only promised once a hold exists. */
+    priceMinor: number;
+    currency: string;
+  }
+  
+  export interface SeatMap {
+    showtimeId: number;
+    seats: Seat[];
+    /* Only the rules currently moving prices, as percentages. Empty means every
+       seat is at its listed price. The money amounts are per tier, so they live
+       on each seat rather than here. */
+    priceRules: PriceRate[];
+  }
+  
+  export interface PriceRate {
+    code: PriceRuleCode;
+    label: string;
+    basisPoints: number;
+  }
    
    export interface HeldSeat {
-     seatId: number;
-     rowLabel: string;
-     seatNumber: number;
-     tier: Tier;
-     /* Integer minor units. Current price, not frozen: the booking is where a
-        price is recorded as charged. */
-     priceMinor: number;
-   }
-   
-   export interface Hold {
-     holdId: string;
-     showtimeId: number;
-     /* Up to three seats as a guest and six signed in, ordered by row then seat
-        number. One hold covers all of them: it expires whole and converts whole. */
-     seats: HeldSeat[];
-     totalMinor: number;
-     currency: string;
-     /* Authoritative expiry instant, for display. */
-     expiresAt: string;
-     /* Remaining seconds, for the countdown. Counting down from this rather than
-        diffing expiresAt means a skewed client clock cannot break the timer.
-        One deadline for the whole hold, not one per seat. */
-     ttlSeconds: number;
-   }
+    seatId: number;
+    rowLabel: string;
+    seatNumber: number;
+    tier: Tier;
+    /* Integer minor units, frozen at claim time. This is the number that will be
+       charged, not today's price. */
+    priceMinor: number;
+  }
+  
+  export type PriceRuleCode =
+  | "OCCUPANCY"
+  | "LEAD_TIME"
+  | "TIME_OF_DAY"
+  | "DAY_OF_WEEK"
+  | "CAP";
+
+export interface PriceLine {
+  code: PriceRuleCode;
+  /* Resolved copy from the server, snapshotted when the hold was taken, so an
+     old booking keeps the wording it was shown. */
+  label: string;
+  /* Integer basis points. 2000 is 20 percent. Divide by 100 to display. */
+  basisPoints: number;
+  /* What that percentage came to, in minor units. Signed: the cap is negative. */
+  adjustmentMinor: number;
+}
+
+export interface Pricing {
+  /* The listed price for this hall class and tier, before any rule. */
+  baseMinor: number;
+  /* What one seat actually costs. */
+  adjustedMinor: number;
+  /* Only the rules that moved the price. Empty means the listed price stands,
+     which the UI should render as one line, not an empty panel. */
+  rules: PriceLine[];
+}
+
+  export interface Hold {
+    holdId: string;
+    showtimeId: number;
+    seats: HeldSeat[];
+    totalMinor: number;
+    currency: string;
+    pricing: Pricing;
+    expiresAt: string;
+    ttlSeconds: number;
+  }
    
    export interface HoldDetail extends Hold {
      status: HoldStatus;
