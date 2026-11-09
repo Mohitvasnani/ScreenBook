@@ -1,10 +1,15 @@
 /* Money is stored and sent as integer minor units. It becomes a decimal string
-   here and nowhere else. */
+   here and nowhere else.
 
+   Fraction digits are 0 to 2 rather than a fixed 2. Every listed price is a
+   whole number of rupees and reads as one, while a 5% band on an odd price can
+   produce a genuine 50 paise line and that still shows correctly. */
    export function money(minor: number, currency: string): string {
     return new Intl.NumberFormat("en-GB", {
       style: "currency",
       currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
     }).format(minor / 100);
   }
   

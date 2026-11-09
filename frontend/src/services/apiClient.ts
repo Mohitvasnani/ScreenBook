@@ -5,9 +5,11 @@
    import { ApiError, type ProblemDetail } from "./problemDetails";
    import type {
      Booking,
+     ForgotPasswordRequest,
      Hold,
      HoldDetail,
      LoginRequest,
+     ResetPasswordRequest,
      SeatMap,
      Showtime,
      SignupRequest,
@@ -60,7 +62,7 @@
       whole app. */
    async function withCrossTabLock<T>(run: () => Promise<T>): Promise<T> {
      if (typeof navigator === "undefined" || !("locks" in navigator)) return run();
-
+   
      /* The DOM typings make request() generic over the callback's return type,
         so an async callback infers Promise<T> and the call reads as
         Promise<Promise<T>>. Promises flatten at runtime; awaiting here makes
@@ -107,7 +109,7 @@
        /* The API sends problem details. A proxy, a CDN or a platform error
           page does not, so anything not recognisably RFC 9457 is replaced with
           the same shape and callers keep one error type to handle.
-
+   
           The check is on the parsed body, not merely on whether it parsed. A
           Vercel 404 is valid JSON with no type field, and casting it handed
           every caller an object that lied about its shape. */
@@ -116,7 +118,7 @@
          title: response.statusText || "Request failed",
          status: response.status,
        };
-
+   
        let detail = fallback;
        try {
          const body: unknown = await response.json();
@@ -134,8 +136,10 @@
        throw new ApiError(detail);
      }
    
-     /* DELETE and logout return 204 with no body, so there is nothing to parse. */
-     if (response.status === 204) return undefined as T;
+     /* 204 from DELETE and logout, 202 from forgot-password: success with
+        nothing to say. Checked on the status rather than by trying to parse and
+        catching, because that would also swallow a genuinely malformed body. */
+     if (response.status === 204 || response.status === 202) return undefined as T;
    
      return (await response.json()) as T;
    }
@@ -211,6 +215,23 @@
    
      /* 204, and calling it without a session is not an error. */
      logOut: () => request<void>("/auth/logout", { method: "POST" }),
+   
+     /* 202 whatever happened, and deliberately so: an unknown address, a
+        rate-limited one and a real one are indistinguishable. Nothing in the
+        UI may imply otherwise. */
+     forgotPassword: (body: ForgotPasswordRequest) =>
+       request<void>("/auth/forgot-password", {
+         method: "POST",
+         body: JSON.stringify(body),
+       }),
+   
+     /* 204, and it clears the session cookies as well, because the reset
+        revoked every session including this browser's. */
+     resetPassword: (body: ResetPasswordRequest) =>
+       request<void>("/auth/reset-password", {
+         method: "POST",
+         body: JSON.stringify(body),
+       }),
    
      /* Who the cookie says you are. For a guest this 401s, attempts one refresh
         that also 401s, and throws: two requests to learn there is no session.

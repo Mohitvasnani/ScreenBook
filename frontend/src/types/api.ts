@@ -180,3 +180,16 @@ export interface Pricing {
      email: string;
      password: string;
    }
+
+   export interface ForgotPasswordRequest {
+    email: string;
+  }
+  
+  export interface ResetPasswordRequest {
+    /* From the emailed link. The token names the account, which is why no
+       address is sent: trusting one here would let anyone with any valid token
+       reset anybody. */
+    token: string;
+    /* 8 to 72 characters, same bounds as signup. */
+    password: string;
+  }

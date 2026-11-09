@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-
+import { PriceRateNotice } from "@/components/PriceRateNotice";
 import { useAuth } from "@/components/AuthProvider";
 import { ConflictNotice } from "@/components/ConflictNotice";
 import { SeatLegend } from "@/components/SeatLegend";
@@ -87,6 +87,7 @@ export function SeatSelectionScreen() {
       }
       return;
     }
+    
 
     if (!extendsRun(selected, seat)) {
       /* Not next to what is already chosen. Starting a new selection there is
@@ -165,6 +166,10 @@ export function SeatSelectionScreen() {
           {money(showtime.priceMinor, showtime.currency)}
         </p>
       )}
+
+      {/* The "from" figure above is already the adjusted one, so without this
+          a customer sees a price with no reason attached. */}
+      {seats.data && <PriceRateNotice rules={seats.data.priceRules} />}
 
       <div className={styles.layout}>
         <div>

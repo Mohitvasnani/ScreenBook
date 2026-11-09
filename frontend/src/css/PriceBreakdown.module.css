@@ -1,0 +1,32 @@
+/* Matches CheckoutScreen's .row so the breakdown reads as part of the same
+   list rather than a panel dropped into it. */
+
+   .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  
+  .label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    color: var(--color-n700);
+  }
+  
+  /* The reason, set quieter than the label it qualifies. A customer reads the
+     rule first and the percentage second. */
+  .percent {
+    padding: 1px 6px;
+    border: 1px solid var(--color-divider);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--color-n700);
+  }
+  
+  .amount {
+    font-variant-numeric: tabular-nums;
+  }

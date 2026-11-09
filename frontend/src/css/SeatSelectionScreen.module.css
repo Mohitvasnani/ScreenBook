@@ -230,7 +230,23 @@
 
 @media (min-width: 1024px) {
   .layout {
-    grid-template-columns: 1fr 280px;
+    grid-template-columns: 1fr 320px;
     gap: 40px;
+  }
+
+  /* The total and the Hold button stay in view while the map is scrolled.
+     align-self: start on .aside is already set above, which is what makes
+     sticky work inside a grid item. */
+  .aside {
+    position: sticky;
+    top: 24px;
+  }
+}
+
+/* The seat map is ten rows of twelve. Capping the page at 1040px on a 1440px
+   screen made it small for no reason other than the cap. */
+@media (min-width: 1280px) {
+  .page {
+    max-width: 1240px;
   }
 }

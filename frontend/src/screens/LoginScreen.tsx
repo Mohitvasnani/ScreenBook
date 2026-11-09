@@ -132,6 +132,8 @@ export function LoginScreen() {
       <p className={styles.alt}>
         No account?{" "}
         <Link href={`/signup?next=${encodeURIComponent(next)}`}>Create one</Link>
+        {" · "}
+        <Link href="/forgot-password">Forgot your password?</Link>
       </p>
     </div>
   );

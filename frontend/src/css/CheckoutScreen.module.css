@@ -186,3 +186,41 @@
   line-height: 1.5;
   color: var(--color-n700);
 }
+.heldPrice {
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: var(--color-n700);
+}
+/* ------------------------------------------------------------- desktop */
+
+/* 900px is where 640px of summary plus a 300px action column stops being
+   cramped. Below it the grid is one column and the source order already reads
+   correctly, so there is nothing to reorder. */
+   @media (min-width: 900px) {
+    .page {
+      max-width: 920px;
+    }
+  
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 40px;
+      align-items: start;
+    }
+  
+    /* Sticks so the confirm button and the remaining time stay in view while
+       the breakdown is being read. align-self from the grid is what makes
+       sticky work here at all. */
+    .action {
+      position: sticky;
+      top: 24px;
+    }
+  
+    /* The buttons were full width of a 640px page, which read as stretched.
+       Full width of a 300px column reads as deliberate. */
+    .confirm,
+    .release,
+    .primary {
+      margin-top: 16px;
+    }
+  }

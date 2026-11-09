@@ -6,11 +6,12 @@ import { useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { HoldCountdown } from "@/components/HoldCountdown";
+import { PriceBreakdown } from "@/components/PriceBreakdown";
 import styles from "@/css/CheckoutScreen.module.css";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
 import { ApiError } from "@/services/problemDetails";
-import { dayAndTime, money, seatNames } from "@/utils/format";
+import { clockTime, dayAndTime, money, seatNames } from "@/utils/format";
 
 export function CheckoutScreen() {
   const router = useRouter();
@@ -60,7 +61,7 @@ export function CheckoutScreen() {
      hold was already past it when the page loaded. */
   const isOver = expired || hold?.status === "EXPIRED";
 
-   async function confirm() {
+  async function confirm() {
     setBusy(true);
     setProblem(null);
     try {
@@ -155,91 +156,112 @@ export function CheckoutScreen() {
           </Link>
         </div>
       ) : (
-        <>
-          <dl className={styles.summary}>
-            {showtime && (
-              <>
-                <Row label="Film" value={showtime.filmTitle} />
-                <Row label="When" value={dayAndTime(showtime.startsAt)} />
-                <Row label="Screen" value={showtime.screenName} />
-              </>
+        /* Two columns on a wide screen: what you are buying on the left, what
+           you do about it on the right. Below 900px the grid is one column and
+           the source order already reads correctly, so the markup needs no
+           media query of its own. */
+        <div className={styles.layout}>
+          <div className={styles.order}>
+            <dl className={styles.summary}>
+              {showtime && (
+                <>
+                  <Row label="Film" value={showtime.filmTitle} />
+                  <Row label="When" value={dayAndTime(showtime.startsAt)} />
+                  <Row label="Screen" value={showtime.screenName} />
+                </>
+              )}
+
+              {/* One line, not one per seat. Seats on a hold share a row and
+                  tier follows the row band, so every seat here costs the same
+                  and repeating the figure explained nothing. The money is in
+                  the breakdown below. */}
+              <Row
+                label={count === 1 ? "Seat" : "Seats"}
+                value={`${seatList} · ${hold.seats[0].tier.toLowerCase()}`}
+              />
+
+              <PriceBreakdown
+                pricing={hold.pricing}
+                seatCount={count}
+                currency={hold.currency}
+              />
+
+              {/* The hold's own total, not the showtime's price. The showtime
+                  carries the cheapest tier's price, so using it here
+                  undercharged every Premium and Executive seat. */}
+              <div className={styles.total}>
+                <dt>Total</dt>
+                <dd className={`${styles.totalValue} tnum`}>
+                  {money(hold.totalMinor, hold.currency)}
+                </dd>
+              </div>
+            </dl>
+
+            {/* The promise the freeze exists to make, placed with the money
+                rather than with the countdown, because the countdown already
+                says how long you have and this is about what you pay. */}
+            <p className={styles.heldPrice}>
+              This price is held for you until {clockTime(hold.expiresAt)}.
+              {hold.pricing.rules.length > 0 &&
+                " Prices move as the house fills; yours will not."}
+            </p>
+          </div>
+
+          <aside className={styles.action}>
+            {user ? (
+              <p className={styles.account}>
+                Booking as {user.displayName}. This will appear in your bookings
+                and the confirmation goes to {user.email}.
+              </p>
+            ) : (
+              <div className={styles.field}>
+                <label className={styles.fieldLabel} htmlFor="email">
+                  Email for your confirmation
+                  <span className={styles.optional}>optional</span>
+                </label>
+                <input
+                  id="email"
+                  className={styles.input}
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  maxLength={254}
+                  placeholder="you@example.com"
+                  disabled={busy}
+                />
+                <p className={styles.fieldHint}>
+                  Leave it blank and your booking reference on the next screen is
+                  the only record you get, so save it. An address here is not an
+                  account: nobody has verified it, so it is never used to decide
+                  who a booking belongs to.
+                </p>
+              </div>
             )}
 
-            {/* A line per seat with its own price. Three seats across three
-                tiers have three different prices, so one combined line would
-                leave the total unexplained. */}
-            {hold.seats.map((seat) => (
-              <Row
-                key={seat.seatId}
-                label={count === 1 ? "Seat" : ""}
-                value={`${seat.rowLabel}${seat.seatNumber} · ${seat.tier.toLowerCase()} · ${money(seat.priceMinor, hold.currency)}`}
-              />
-            ))}
+            {problem && <p className={styles.problem}>{problem}</p>}
 
-            {/* The hold's own total, not the showtime's price. The showtime
-                carries the cheapest tier's price, so using it here undercharged
-                every Premium and Executive seat. */}
-            <div className={styles.total}>
-              <dt>Total</dt>
-              <dd className={`${styles.totalValue} tnum`}>
-                {money(hold.totalMinor, hold.currency)}
-              </dd>
-            </div>
-          </dl>
+            <button
+              type="button"
+              className={styles.confirm}
+              onClick={confirm}
+              disabled={busy}
+            >
+              {busy
+                ? "Confirming..."
+                : `Confirm booking · ${money(hold.totalMinor, hold.currency)}`}
+            </button>
 
-          {user ? (
-            <p className={styles.account}>
-              Booking as {user.displayName}. This will appear in your bookings
-              and the confirmation goes to {user.email}.
-            </p>
-          ) : (
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="email">
-                Email for your confirmation
-                <span className={styles.optional}>optional</span>
-              </label>
-              <input
-                id="email"
-                className={styles.input}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                maxLength={254}
-                placeholder="you@example.com"
-                disabled={busy}
-              />
-              <p className={styles.fieldHint}>
-                Leave it blank and your booking reference on the next screen is
-                the only record you get, so save it. An address here is not an
-                account: nobody has verified it, so it is never used to decide
-                who a booking belongs to.
-              </p>
-            </div>
-          )}
-
-          {problem && <p className={styles.problem}>{problem}</p>}
-
-          <button
-            type="button"
-            className={styles.confirm}
-            onClick={confirm}
-            disabled={busy}
-          >
-            {busy
-              ? "Confirming..."
-              : `Confirm booking · ${money(hold.totalMinor, hold.currency)}`}
-          </button>
-
-          <button
-            type="button"
-            className={styles.release}
-            onClick={release}
-            disabled={busy}
-          >
-            Release {seatList} and go back
-          </button>
-        </>
+            <button
+              type="button"
+              className={styles.release}
+              onClick={release}
+              disabled={busy}
+            >
+              Release {seatList} and go back
+            </button>
+          </aside>
+        </div>
       )}
     </div>
   );
