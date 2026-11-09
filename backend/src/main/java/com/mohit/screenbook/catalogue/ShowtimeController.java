@@ -12,11 +12,11 @@ import java.util.List;
 @RequestMapping("/api/showtimes")
 public class ShowtimeController {
 
-    private final ShowtimeQuery showtimes;
-    private final SeatMapQuery seatMap;
+    private final ShowtimeListService showtimes;
+    private final SeatMapService seatMap;
     private final int maxResults;
 
-    ShowtimeController(ShowtimeQuery showtimes, SeatMapQuery seatMap,
+    ShowtimeController(ShowtimeListService showtimes, SeatMapService seatMap,
                        @Value("${screenbook.showtimes.max-results}") int maxResults) {
         this.showtimes = showtimes;
         this.seatMap = seatMap;

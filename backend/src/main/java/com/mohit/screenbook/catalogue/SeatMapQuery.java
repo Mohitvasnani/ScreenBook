@@ -43,7 +43,7 @@ public class SeatMapQuery {
     }
 
     @Transactional(readOnly = true)
-    public SeatMapResponse forShowtime(long showtimeId) {
+    public List<SeatView> rowsFor(long showtimeId) {
         List<SeatView> seats = jdbc.sql(SEAT_MAP)
                 .param("showtimeId", showtimeId)
                 .query(SeatMapQuery::toSeatView)
@@ -55,7 +55,7 @@ public class SeatMapQuery {
         if (seats.isEmpty() && !showtimeExists(showtimeId)) {
             throw new NotFoundException("No showtime with id %d.".formatted(showtimeId));
         }
-        return new SeatMapResponse(showtimeId, seats);
+        return seats;
     }
 
     /**

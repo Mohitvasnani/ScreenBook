@@ -16,7 +16,9 @@ import com.mohit.screenbook.pricing.PricingRules;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.mohit.screenbook.common.ShowtimeStartedException;
+import com.mohit.screenbook.pricing.PriceLineView;
+import com.mohit.screenbook.pricing.PricingView;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -152,11 +154,26 @@ public class HoldService {
            that has since filled; reading it after the insert would count this
            request's own seats and let a customer inflate their own price. */
         ShowtimePricingInputs inputs = showtimes.pricingInputsFor(showtimeId);
+        /* A screening that has already started cannot be booked. The boundary
+           matches ShowtimeQuery.UPCOMING, which lists on starts_at > now(), so
+           a screening disappears from the list and stops being claimable at the
+           same instant.
 
+           Checked here rather than before the locks, because startsAt arrives
+           free with the occupancy read and a dedicated query would cost every
+           claim a round trip to guard a rare case. The locks are held a few
+           milliseconds longer only on a request that was going to fail anyway.
+
+           This also keeps the lead-time rule honest. Without it, hours to
+           showtime goes negative, lands in the imminent band, and surcharges a
+           film that has already ended. */
+        if (!inputs.startsAt().isAfter(now)) {
+            throw new ShowtimeStartedException();
+        }
         /* Every row carries the same listed price, because a hold covers one
            tier, so the first is the base for the whole hold. */
         PriceBreakdown price = pricing.priceFor(
-                rows.getFirst().priceMinor(),
+                rows.getFirst().basePriceMinor(),
                 inputs.seatsTaken(), inputs.seatsTotal(),
                 inputs.startsAt(), now);
 
@@ -167,6 +184,7 @@ public class HoldService {
         return new HoldResponse(
                 hold.getId(), showtimeId,
                 seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
+                pricingView(hold, frozen),
                 hold.getExpiresAt(), ttl.toSeconds());
     }
 
@@ -206,6 +224,7 @@ public class HoldService {
         return new HoldDetailResponse(
                 hold.getId(), hold.getShowtimeId(),
                 seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
+                pricingView(hold, frozen),
                 hold.getExpiresAt(), hold.remainingSeconds(now),
                 apiStatus(hold.stateAt(now)));
     }
@@ -290,6 +309,28 @@ public class HoldService {
     private static Map<Long, Integer> frozenPrices(SeatHold hold) {
         return hold.getSeats().stream()
                 .collect(Collectors.toMap(HoldSeat::getSeatId, HoldSeat::getPriceMinor));
+    }
+
+    /* Only the lines that moved the price are returned. The zero bands stay in
+   the database, because a hold taken before a rule existed has to stay
+   distinguishable from one where the rule simply did not fire, but a
+   customer does not need to read "Occupancy, plus nothing". */
+    private static PricingView pricingView(SeatHold hold, Map<Long, Integer> frozen) {
+        List<PriceLineView> lines = hold.getPriceRules().stream()
+                .filter(rule -> rule.getBasisPoints() != 0)
+                .map(rule -> new PriceLineView(
+                        rule.getCode(), rule.getLabel(),
+                        rule.getBasisPoints(), rule.getAdjustmentMinor()))
+                .toList();
+
+        /* A hold covers one tier, so every seat carries the same price and the
+           first is the per-seat figure for the whole hold. baseMinor plus every
+           stored line, zeros and cap included, must equal this number. Nothing
+           enforces that at runtime; the quoted-equals-charged test is what
+           pins it. */
+        int adjusted = frozen.values().stream().findFirst().orElseThrow();
+
+        return new PricingView(hold.getBasePriceMinor(), adjusted, lines);
     }
 
     private static int total(Map<Long, Integer> frozen) {
