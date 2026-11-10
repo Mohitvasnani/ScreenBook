@@ -16,6 +16,7 @@ import java.time.Instant;
  */
 public record ShowtimeRow(
         long id,
+        long cinemaId,
         String filmTitle,
         String screenName,
         Instant startsAt,

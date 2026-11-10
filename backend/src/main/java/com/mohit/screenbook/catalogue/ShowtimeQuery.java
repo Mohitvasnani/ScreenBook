@@ -5,22 +5,29 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
  * The read side. Plain SQL rather than JPA, because these responses are joins
- * across three tables plus counts and match no entity. Writing the join is
+ * across four tables plus counts and match no entity. Writing the join is
  * clearer than persuading Hibernate to produce it.
  *
- * Both queries return rows, not responses. Pricing is applied above this, in
+ * These return rows, not responses. Pricing is applied above this, in
  * ShowtimeListService and SeatMapService, because what a seat costs depends on
  * the clock and on how full the house is and neither belongs in a query.
  */
 @Repository
 public class ShowtimeQuery {
 
-    /* base_from_price_minor is the cheapest listed seat for this screening: the
+    /* Shared by the listing and the single read, which have to agree about the
+       shape of a screening down to the column order, because one row mapper
+       reads both. Two copies of this select list would be two places to add the
+       next column and one place to forget it.
+
+       base_from_price_minor is the cheapest listed seat for this screening: the
        lowest row in the price table for its hall class. ShowtimeListService
        applies the rules to it, because the contract calls this a "from" price
        and a headline price nobody can buy at is exactly what the CMA's pricing
@@ -28,22 +35,22 @@ public class ShowtimeQuery {
 
        That subquery must filter on currency. Without it, min() runs across
        every currency in the table and a Jaipur screening advertises from 900,
-       which is nine pounds read as nine rupees. The price table has been
-       keyed on currency since V17 and every join to it has to say so; this is
-       the third place in the wave where forgetting that has caused a bug.
+       which is nine pounds read as nine rupees. The price table has been keyed
+       on currency since V17 and every join to it has to say so.
 
-       currency comes from the cinema rather than from showtime.currency. The
-       cinema is where it belongs, because a building does not change
-       currency, and keeping a copy on the screening would be a second source
-       of truth that can disagree with the first.
+       currency and cinema_id come from the cinema rather than from the
+       screening. The cinema is where they belong: a building does not change
+       currency, and a copy on the screening would be a second source of truth
+       that can disagree with the first.
 
        seats_taken comes from showtime_occupancy rather than being counted here.
        The old version subtracted count(*) from booking and seat_hold, which
        counted bookings and holds rather than seats, so it over-reported
        availability for every multi-seat booking after V8. Occupancy now has one
        definition and the pricing rules read the same view. */
-    private static final String UPCOMING = """
+    private static final String SELECT_SHOWTIME = """
             SELECT st.id              AS id,
+                   ci.id              AS cinema_id,
                    f.title            AS film_title,
                    sc.name            AS screen_name,
                    st.starts_at       AS starts_at,
@@ -63,9 +70,29 @@ public class ShowtimeQuery {
             JOIN screen sc  ON sc.id = st.screen_id
             JOIN cinema ci  ON ci.id = sc.cinema_id
             JOIN showtime_occupancy occ ON occ.showtime_id = st.id
-            WHERE st.starts_at > now()
+            """;
+
+    /* The filter is sc.cinema_id, not ci.id, even though the join makes them
+       equal. Postgres does not index a foreign key automatically, but
+       screen_unique_in_cinema from V16 is a btree on (cinema_id, name), so
+       cinema_id is its leading column and "the screens at this cinema" is an
+       index lookup. From there showtime_unique_slot on (screen_id, starts_at)
+       is already the index this ordering wants. */
+    private static final String UPCOMING = SELECT_SHOWTIME + """
+            WHERE sc.cinema_id  = :cinemaId
+              AND st.starts_at  > now()
             ORDER BY st.starts_at
             LIMIT :limit
+            """;
+
+    /* No starts_at filter here, unlike the listing, and that is the difference
+       between the two. A listing shows what you can still book. A single read
+       answers "what is this screening", and a confirmation page or a bookmarked
+       seat map opened after the film started still has to render rather than
+       404. Whether it can be booked is the hold endpoint's answer, which
+       already rejects a started showtime with a 409. */
+    private static final String ONE = SELECT_SHOWTIME + """
+            WHERE st.id = :showtimeId
             """;
 
     /* Everything the pricing rules need, in one read. seats_taken deliberately
@@ -81,6 +108,9 @@ public class ShowtimeQuery {
             WHERE st.id = :showtimeId
             """;
 
+    private static final String CINEMA_EXISTS =
+            "SELECT exists(SELECT 1 FROM cinema WHERE id = :cinemaId)";
+
     private final JdbcClient jdbc;
 
     ShowtimeQuery(JdbcClient jdbc) {
@@ -88,20 +118,44 @@ public class ShowtimeQuery {
     }
 
     @Transactional(readOnly = true)
-    public List<ShowtimeRow> upcomingRows(int limit) {
-        return jdbc.sql(UPCOMING)
+    public List<ShowtimeRow> upcomingRows(long cinemaId, int limit) {
+        List<ShowtimeRow> rows = jdbc.sql(UPCOMING)
+                .param("cinemaId", cinemaId)
                 .param("limit", limit)
-                .query((rs, rowNum) -> new ShowtimeRow(
-                        rs.getLong("id"),
-                        rs.getString("film_title"),
-                        rs.getString("screen_name"),
-                        rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
-                        rs.getInt("runtime_minutes"),
-                        rs.getInt("base_from_price_minor"),
-                        rs.getString("currency"),
-                        rs.getInt("seats_taken"),
-                        rs.getInt("seats_total")))
+                .query(ShowtimeQuery::toRow)
                 .list();
+
+        /* Same shape as SeatMapQuery.rowsFor. An empty list is ambiguous: a
+           cinema that does not exist, or a real cinema the seeder has not
+           reached. They are different answers and only the second is an empty
+           list, so the second query is worth paying for, and only then. */
+        if (rows.isEmpty() && !cinemaExists(cinemaId)) {
+            throw new NotFoundException("No cinema with id %d.".formatted(cinemaId));
+        }
+        return rows;
+    }
+
+    /**
+     * One screening by its own id.
+     *
+     * No ambiguity to resolve here, so no second query: a single read either
+     * found the row or there is no such screening.
+     */
+    @Transactional(readOnly = true)
+    public ShowtimeRow oneRow(long showtimeId) {
+        return jdbc.sql(ONE)
+                .param("showtimeId", showtimeId)
+                .query(ShowtimeQuery::toRow)
+                .optional()
+                .orElseThrow(() -> new NotFoundException(
+                        "No showtime with id %d.".formatted(showtimeId)));
+    }
+
+    private boolean cinemaExists(long cinemaId) {
+        return jdbc.sql(CINEMA_EXISTS)
+                .param("cinemaId", cinemaId)
+                .query(Boolean.class)
+                .single();
     }
 
     /**
@@ -121,5 +175,19 @@ public class ShowtimeQuery {
                 .optional()
                 .orElseThrow(() -> new NotFoundException(
                         "No showtime with id %d.".formatted(showtimeId)));
+    }
+
+    private static ShowtimeRow toRow(ResultSet rs, int rowNum) throws SQLException {
+        return new ShowtimeRow(
+                rs.getLong("id"),
+                rs.getLong("cinema_id"),
+                rs.getString("film_title"),
+                rs.getString("screen_name"),
+                rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
+                rs.getInt("runtime_minutes"),
+                rs.getInt("base_from_price_minor"),
+                rs.getString("currency"),
+                rs.getInt("seats_taken"),
+                rs.getInt("seats_total"));
     }
 }
