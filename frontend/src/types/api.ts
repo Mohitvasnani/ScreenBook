@@ -7,6 +7,9 @@
    
    export interface Showtime {
     id: number;
+        /* The cinema this screening is at, so a page reached by showtime id alone
+       can still name the building and format the time in its zone. */
+    cinemaId: number;
     filmTitle: string;
     screenName: string;
     startsAt: string;
@@ -20,6 +23,45 @@
     seatsAvailable: number;
     seatsTotal: number;
   }
+
+     /* A cinema, as GET /api/cinemas returns it. The two coordinates are what a
+      map marker needs; MapLibre takes them as [lon, lat], which is the opposite
+      order to how they are named here and on the wire. */
+      export interface Cinema {
+        id: number;
+        name: string;
+        city: string;
+        state: string;
+        latitude: number;
+        longitude: number;
+        /* ISO 4217, and the cinema's, not the customer's. Nothing in this system
+           converts between currencies, so an amount is only meaningful next to the
+           code it was priced in. */
+        currency: string;
+        screenCount: number;
+      }
+    
+      /* GET /api/cinemas/nearest.
+    
+         extends rather than repeating the fields. The server repeats them because a
+         Java record cannot extend another, which is a language limitation and not a
+         statement about the contract: the two responses really are the same shape
+         plus a distance. */
+      export interface NearestCinema extends Cinema {
+        /* Whole metres, rounded server-side. Sub-metre precision on the position of
+           a building is noise. */
+        distanceMetres: number;
+      }
+    
+      /* GET /api/cinemas/{cinemaId}. */
+      export interface CinemaDetail extends Cinema {
+        address: string;
+        /* An IANA zone name. Sent so a screening prints at its own cinema's local
+           time rather than the browser's: 20:00 in Jaipur is 20:00 to the people in
+           the room, and startsAt is an instant, so the client cannot work that out
+           on its own. */
+        timezone: string;
+      }
    
    export type Tier = "NORMAL" | "PREMIUM" | "EXECUTIVE";
    

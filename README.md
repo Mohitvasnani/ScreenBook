@@ -165,8 +165,14 @@ cannot produce a four-figure ticket.
 `PricingRules` is a pure function of its arguments. `now` arrives as a
 parameter rather than a `Clock` field, and there is no repository and no
 transaction, which is why its tests are the only ones in the project that do
-not need Docker. Evening and weekend are questions about Indian local time, so
-the zone is configuration and never the server's default.
+not need Docker. Evening and weekend are questions about local time, so the
+zone is configuration and never the server's default.
+
+That zone is still one global value, which is now wrong in a way worth naming.
+`cinema.timezone` exists and the seeder reads it, so a 19:00 Liverpool
+screening is scheduled as a Liverpool evening and priced as an Indian
+small-hours one. Passing the cinema's zone into `priceFor`, the way `now` is
+already passed, is the next change.
 
 ### A quote is frozen, a listing is not
 
@@ -261,12 +267,16 @@ that there is no lazy loading anywhere, so N+1 queries and
 
 ## API
 
-Fifteen endpoints. Full contract in
+Nineteen endpoints. Full contract in
 [docs/api-contract.md](docs/api-contract.md).
 
 | | |
 |---|---|
-| `GET /api/showtimes` | upcoming screenings with live seat counts |
+| `GET /api/cinemas` | every cinema, with coordinates, for the map |
+| `GET /api/cinemas/nearest` | the nearest few to a point, from one indexed query |
+| `GET /api/cinemas/{id}` | one cinema, with its address and its own timezone |
+| `GET /api/showtimes?cinemaId=` | upcoming screenings at one cinema, with live seat counts |
+| `GET /api/showtimes/{id}` | one screening, for pages reached by URL alone |
 | `GET /api/showtimes/{id}/seats` | the seat map, status computed per request |
 | `POST /api/holds` | claim adjacent seats for 300 seconds, three as a guest and six signed in |
 | `GET /api/holds/{id}` | read a hold and its remaining time |
@@ -351,7 +361,7 @@ Deferred with the reasoning recorded, so the omissions read as decisions.
   it, which is why my-bookings matches on `user_id` and never on email.
 - **Payment.** `pricePaidMinor` records the price at booking time. No money
   moves.
-- **GraphQL.** Fifteen fixed-shape resources with no over-fetching problem, and
+- **GraphQL.** Nineteen fixed-shape resources with no over-fetching problem, and
   an error model that depends on the HTTP status codes GraphQL discards.
 
 ## Reversed on purpose
@@ -382,10 +392,16 @@ either half alone.
 
 ## Next
 
-- **Cinema endpoints and a map.** The schema and the data are in: screens
-  belong to a cinema, cinemas carry a `geography(Point, 4326)` and a GiST
-  index, so the nearest few come back from one indexed query rather than a
-  widening loop. What is left is exposing them and drawing them.
+- **The map and the cinema picker.** The three cinema endpoints are in, so
+  what is left is drawing them: a MapLibre map with clustering, because 130
+  markers at country zoom is one blob over Delhi, a city picker, and a nearby
+  list with distance badges on both the granted and the denied geolocation
+  path.
+- **The cinema's timezone in the pricing rules**, so the seeder and the pricer
+  stop disagreeing about when the evening is.
+- **The seat map reading `screen.aisle_after`** instead of the frontend's
+  hardcoded block widths. The column is populated with three room shapes and
+  the client still draws every house as 3 | 6 | 3.
 - **Real film data** from TMDB, ingested once offline and committed as SQL, so
   the running service keeps exactly one third-party dependency. It also fills
   `film.released_on`, which is what makes a weeks-since-release pricing rule

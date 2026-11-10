@@ -1,5 +1,5 @@
-import { ShowtimesScreen } from "@/screens/ShowtimesScreen";
+import { CinemasScreen } from "@/screens/CinemasScreen";
 
 export default function Page() {
-  return <ShowtimesScreen />;
+  return <CinemasScreen />;
 }

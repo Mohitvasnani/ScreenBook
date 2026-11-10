@@ -63,7 +63,7 @@ export function SiteHeader() {
 
         <nav aria-label="Main" className={styles.nav}>
           <Link href="/" className={onRace ? styles.navLink : styles.navLinkActive}>
-            Showtimes
+            Cinemas
           </Link>
           <Link href="/race" className={onRace ? styles.navLinkActive : styles.navLink}>
             <svg

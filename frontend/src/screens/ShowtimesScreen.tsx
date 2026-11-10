@@ -1,36 +1,61 @@
 "use client";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
-import Link from "next/link";
-
 import styles from "@/css/ShowtimesScreen.module.css";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
 import type { Showtime } from "@/types/api";
-import { clockTime, money, runtime } from "@/utils/format";
+import { clockTimeAt, dayAt, money, runtime } from "@/utils/format";
 
 export function ShowtimesScreen() {
-  const { data, error, loading, reload } = useApi(() => api.listShowtimes(), "showtimes");
+  /* From the route, the same way SeatSelectionScreen reads its showtime id. */
+  const cinemaId = Number(useParams().cinemaId);
+
+  /* Two requests rather than one. The alternative is the showtimes response
+     carrying its cinema on every row, which repeats the same building twelve
+     times to save a round trip, and the two reads are independent so they run
+     in parallel. The cinema is also what the page needs first: without its
+     timezone, every time on this screen would be in the viewer's zone. */
+  const cinema = useApi(() => api.getCinema(cinemaId), `cinema-${cinemaId}`);
+  const showtimes = useApi(() => api.listShowtimes(cinemaId), `showtimes-${cinemaId}`);
 
   /* The API returns a flat list; the screen shows them grouped under each film. */
   const byFilm = new Map<string, Showtime[]>();
-  for (const showtime of data ?? []) {
+  for (const showtime of showtimes.data ?? []) {
     byFilm.set(showtime.filmTitle, [...(byFilm.get(showtime.filmTitle) ?? []), showtime]);
   }
 
-  const today = new Date().toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
+  const zone = cinema.data?.timezone;
+
+  /* "Today" is a question about where the cinema is, not where the viewer is.
+     At 23:30 in Liverpool it is already tomorrow in Jaipur, and a heading that
+     says otherwise contradicts the times underneath it. */
+  const today =
+    zone && showtimes.data?.length
+      ? dayAt(showtimes.data[0].startsAt, zone)
+      : null;
+
+  const error = cinema.error ?? showtimes.error;
+  const loading = cinema.loading || showtimes.loading;
 
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>What&apos;s on</h1>
-      <p className={styles.subtitle}>Riverside · {today}</p>
+      <p className={styles.back}>
+        <Link href="/">All cinemas</Link>
+      </p>
 
-            {loading && (
+      <h1 className={styles.title}>{cinema.data?.name ?? "What's on"}</h1>
+      <p className={styles.subtitle}>
+        {cinema.data
+          ? [cinema.data.city, today].filter(Boolean).join(" · ")
+          : "Loading"}
+      </p>
+
+      {loading && (
         <div className={styles.skeletons} aria-busy aria-label="Loading showtimes">
           <Skeleton height="112px" />
           <Skeleton height="112px" />
@@ -41,38 +66,53 @@ export function ShowtimesScreen() {
         <ErrorState
           error={error}
           title="Could not load showtimes."
-          onRetry={reload}
+          onRetry={() => {
+            cinema.reload();
+            showtimes.reload();
+          }}
         />
       )}
 
-      {data?.length === 0 && (
+      {/* A real cinema with nothing scheduled, which is a different answer from
+          a cinema that does not exist: that one arrives as a 404 and renders
+          above as an error. */}
+      {showtimes.data?.length === 0 && (
         <EmptyState
-          title="Nothing on today."
-          detail="Check back tomorrow, or try another day."
-        />
+          title="Nothing on here today."
+          detail="Try another cinema, or check back tomorrow."
+        >
+          <Link href="/">All cinemas</Link>
+        </EmptyState>
       )}
 
-      {[...byFilm.entries()].map(([film, showtimes]) => (
-        <section key={film} className={styles.film}>
-          <h2 className={styles.filmTitle}>{film}</h2>
-          <p className={styles.filmMeta}>{runtime(showtimes[0].runtimeMinutes)}</p>
+      {zone &&
+        [...byFilm.entries()].map(([film, forFilm]) => (
+          <section key={film} className={styles.film}>
+            <h2 className={styles.filmTitle}>{film}</h2>
+            <p className={styles.filmMeta}>{runtime(forFilm[0].runtimeMinutes)}</p>
 
-          <ul className={styles.times}>
-            {showtimes.map((showtime) => (
-              <li key={showtime.id}>
-                <ShowtimeCard showtime={showtime} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+            <ul className={styles.times}>
+              {forFilm.map((showtime) => (
+                <li key={showtime.id}>
+                  <ShowtimeCard showtime={showtime} timeZone={zone} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
     </div>
   );
 }
 
 /* Lives here rather than in components/ because nothing else renders one.
    Move it if that changes. */
-function ShowtimeCard({ showtime }: { showtime: Showtime }) {
+function ShowtimeCard({
+  showtime,
+  timeZone,
+}: {
+  showtime: Showtime;
+  timeZone: string;
+}) {
   const soldOut = showtime.seatsAvailable === 0;
   const nearlyFull = !soldOut && showtime.seatsAvailable <= 12;
   const filled = 1 - showtime.seatsAvailable / showtime.seatsTotal;
@@ -80,7 +120,7 @@ function ShowtimeCard({ showtime }: { showtime: Showtime }) {
   const body = (
     <>
       <span className={soldOut ? styles.timeGone : styles.time}>
-        {clockTime(showtime.startsAt)}
+        {clockTimeAt(showtime.startsAt, timeZone)}
       </span>
 
       <span className={styles.meta}>

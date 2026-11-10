@@ -18,12 +18,13 @@
      UnavailableSeat,
    } from "@/types/api";
    
-   import { asRates, type HallClass, LISTED_PRICE_MINOR, priceFor } from "./pricing";
+   import { CINEMAS, cinemaById, type MockCinema } from "./cinemas";
+   import { asRates, type HallClass, listedPrice, priceFor } from "./pricing";
+   import { localInstant } from "./zones";
    
    const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] as const;
    const SEATS_PER_ROW = 12;
    const SEAT_ID_BASE = 1000;
-   const CURRENCY = "INR";
    
    /* ------------------------------------------------------------------ seats */
    
@@ -37,7 +38,12 @@
      EXECUTIVE: { displayName: "Executive" },
    };
    
-   /* Stands in for screen.hall_class in V12. Screen 4 is the recliner hall. */
+   /* Stands in for screen.hall_class in V12. Screen 4 is the recliner hall.
+   
+      One room shape for every house in the mock, 10 rows of 12, even though V16
+      gives real screens three different layouts in screen.aisle_after. The column
+      is not in the API contract yet, so the client has nothing to read it from and
+      inventing a shape here would be a divergence rather than a simplification. */
    const HALL_CLASS_BY_SCREEN: Record<number, HallClass> = {
      1: "STANDARD",
      2: "STANDARD",
@@ -63,6 +69,10 @@
      tier: Tier;
    }
    
+   /* One seat table for every screen at every cinema. That was already true across
+      the four screens and is now true across ten cinemas, which is safe because
+      nothing is stored against a seat: status is always a question about a seat and
+      a showtime together. */
    export const SEATS: SeatPosition[] = ROWS.flatMap((rowLabel, rowIndex) =>
      Array.from({ length: SEATS_PER_ROW }, (_, i) => ({
        id: SEAT_ID_BASE + rowIndex * SEATS_PER_ROW + (i + 1),
@@ -78,12 +88,6 @@
      return SEATS.find((s) => s.id === seatId);
    }
    
-   /* The listed price, before any rule. Stands in for the join from
-      seat_availability to hall_class_tier_price. */
-   export function listedPriceMinor(showtime: Showtime, seat: SeatPosition): number {
-     return LISTED_PRICE_MINOR[hallClassOf(showtime.screenName)][seat.tier];
-   }
-   
    /* SEATS is built row by row, so filtering it gives reading order with no sort.
       The real API gets the same order from ORDER BY row_label, seat_number. */
    export const seatsInOrder = (seatIds: number[]): SeatPosition[] =>
@@ -91,84 +95,116 @@
    
    /* -------------------------------------------------------------- showtimes */
    
-   /* India Standard Time, matching V13. UTC+5:30 with no daylight saving, so a
-      fixed offset is exact rather than an approximation. */
-   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+   /* The response shape plus nothing. cinemaId is in the contract, so MockShowtime
+      is Showtime: the alias stays because this module reads cinemaId constantly to
+      find a screening's zone and currency, and naming that intent is worth one
+      line. */
+   type MockShowtime = Showtime;
    
    /* Films are invented. Real titles drag in studio-owned posters and nothing here
       needs them to be real. */
-   function buildShowtimes(): Showtime[] {
-     const films = [
-       { title: "The Long Quiet", runtime: 128 },
-       { title: "Saltwater", runtime: 112 },
-       { title: "Paper Moons", runtime: 99 },
-     ];
+   const FILMS = [
+     { title: "The Long Quiet", runtime: 128 },
+     { title: "Saltwater", runtime: 112 },
+     { title: "Paper Moons", runtime: 99 },
+   ];
    
-     /* Midnight today in India, as an India wall clock. */
-     const midnightInIndia = new Date(Date.now() + IST_OFFSET_MS);
-     midnightInIndia.setUTCHours(0, 0, 0, 0);
+   /* Chosen so every rule is reachable: the daytime weekday screenings fire
+      nothing, the evening ones fire the evening band, and Friday and Saturday add
+      the weekend band on top. No price per slot: a seat's price comes from its
+      hall class and tier.
    
-     /* Chosen so every rule is reachable: the daytime weekday screenings fire
-        nothing, the evening ones fire the evening band, and Friday and Saturday
-        add the weekend band on top. No price per slot any more: a seat's price
-        comes from its hall class and tier. */
-     const slots = [
-       { film: 0, screen: 1, hour: 10, minute: 0 },
-       { film: 0, screen: 1, hour: 13, minute: 20 },
-       { film: 0, screen: 1, hour: 19, minute: 10 },
-       { film: 1, screen: 2, hour: 12, minute: 10 },
-       { film: 1, screen: 2, hour: 18, minute: 20 },
-       { film: 1, screen: 2, hour: 21, minute: 40 },
-       { film: 2, screen: 3, hour: 11, minute: 20 },
-       { film: 2, screen: 3, hour: 17, minute: 10 },
-       { film: 2, screen: 4, hour: 14, minute: 40 },
-       { film: 0, screen: 4, hour: 20, minute: 20 },
-     ];
+      Ordered by screen, which matters. A cinema with two screens takes the first
+      six of these, so a screening's position in this list is stable whatever the
+      cinema's size, and so is the id built from it. */
+   const SLOTS = [
+     { film: 0, screen: 1, hour: 10, minute: 0 },
+     { film: 0, screen: 1, hour: 13, minute: 20 },
+     { film: 0, screen: 1, hour: 19, minute: 10 },
+     { film: 1, screen: 2, hour: 12, minute: 10 },
+     { film: 1, screen: 2, hour: 18, minute: 20 },
+     { film: 1, screen: 2, hour: 21, minute: 40 },
+     { film: 2, screen: 3, hour: 11, minute: 20 },
+     { film: 2, screen: 3, hour: 17, minute: 10 },
+     { film: 2, screen: 4, hour: 14, minute: 40 },
+     { film: 0, screen: 4, hour: 20, minute: 20 },
+   ];
    
-     return slots.map((slot, index) => {
-       /* Built as an India wall clock, then shifted back to a real instant. */
-       const india = new Date(midnightInIndia);
-       india.setUTCHours(slot.hour, slot.minute, 0, 0);
-       const startsAt = new Date(india.getTime() - IST_OFFSET_MS);
+   function showtimesAt(cinema: MockCinema): MockShowtime[] {
+     return SLOTS.flatMap((slot, index) => {
+       if (slot.screen > cinema.screens) return [];
    
-       /* Anything already past rolls to tomorrow, so the list never shows a
-          screening that has been and gone, which the real API now rejects
-          outright with a 409. */
-       if (startsAt.getTime() < Date.now()) {
-         startsAt.setUTCDate(startsAt.getUTCDate() + 1);
-       }
+       /* Today at this cinema, in this cinema's own clock, or tomorrow if that slot
+          has already gone. The real seeder keeps a week; one day is enough for a
+          demo and keeps a listing short enough to read.
    
-       return {
-         id: index + 1,
-         filmTitle: films[slot.film].title,
-         screenName: `Screen ${slot.screen}`,
-         startsAt: startsAt.toISOString(),
-         runtimeMinutes: films[slot.film].runtime,
-         /* Both prices depend on how full the house is, so they are worked out
-            per request in the handler rather than frozen into this list. */
-         basePriceMinor: 0,
-         priceMinor: 0,
-         currency: CURRENCY,
-         seatsAvailable: 0,
-         seatsTotal: SEATS_TOTAL,
-       };
+          The three steps are the same as V13's SQL and the seeder's: today's date
+          where the cinema is, a wall clock reading on it, then a real instant. */
+       const today = localInstant(cinema.timezone, 0, slot.hour, slot.minute);
+       const startsAt =
+         today.getTime() > Date.now()
+           ? today
+           : localInstant(cinema.timezone, 1, slot.hour, slot.minute);
+   
+       return [
+         {
+           /* Cinema in the hundreds, slot in the units, so an id that turns up in
+              a URL says which cinema it belongs to. Stable across reloads, which
+              the seeded occupancy below depends on. */
+           id: cinema.id * 100 + index + 1,
+           cinemaId: cinema.id,
+           filmTitle: FILMS[slot.film].title,
+           screenName: `Screen ${slot.screen}`,
+           startsAt: startsAt.toISOString(),
+           runtimeMinutes: FILMS[slot.film].runtime,
+           /* Both prices depend on how full the house is, so they are worked out
+              per request in the handler rather than frozen into this list. */
+           basePriceMinor: 0,
+           priceMinor: 0,
+           currency: cinema.currency,
+           seatsAvailable: 0,
+           seatsTotal: SEATS_TOTAL,
+         },
+       ];
      });
    }
    
-   export const SHOWTIMES: Showtime[] = buildShowtimes();
+   export const SHOWTIMES: MockShowtime[] = CINEMAS.flatMap(showtimesAt);
    
-   export function findShowtime(showtimeId: number): Showtime | undefined {
+   export function findShowtime(showtimeId: number): MockShowtime | undefined {
      return SHOWTIMES.find((s) => s.id === showtimeId);
+   }
+   
+   export const showtimesForCinema = (cinemaId: number): MockShowtime[] =>
+     SHOWTIMES.filter((s) => s.cinemaId === cinemaId);
+   
+   /* Both lists come from CINEMAS, so a screening without a cinema is impossible
+      and a fallback would only hide the day that stops being true. */
+   function zoneOf(showtime: MockShowtime): string {
+     const cinema = cinemaById(showtime.cinemaId);
+     if (!cinema) throw new Error(`Showtime ${showtime.id} has no cinema.`);
+     return cinema.timezone;
+   }
+   
+   /* The listed price, before any rule. Stands in for the join from
+      seat_availability to hall_class_tier_price, and like that join it has to name
+      the currency: since V17 the table is keyed on it, and picking a ladder by hall
+      class and tier alone would price a Liverpool seat in paise. */
+   export function listedPriceMinor(showtime: MockShowtime, seat: SeatPosition): number {
+     return listedPrice(showtime.currency, hallClassOf(showtime.screenName), seat.tier);
    }
    
    /* ------------------------------------------- pre-existing occupancy */
    
-   /* Showtime 5 is seeded full so the sold-out card is always visible. */
-   const SOLD_OUT_SHOWTIMES = new Set([5]);
+   /* Every cinema's fifth slot is seeded full, so the sold-out card is visible
+      wherever a viewer lands rather than at one cinema only. A single screen house
+      has three screenings and so has none, which is the honest version: not every
+      cinema has a sold-out show tonight. */
+   const isSoldOut = (showtimeId: number) => showtimeId % 100 === 5;
    
    /* Derived from the ids rather than random, so a reload shows the same cinema. */
    function seededBooked(showtimeId: number, seatId: number): boolean {
-     if (SOLD_OUT_SHOWTIMES.has(showtimeId)) return true;
+     if (isSoldOut(showtimeId)) return true;
      return (seatId * 7 + showtimeId * 13) % 11 < 3;
    }
    
@@ -245,13 +281,17 @@
      return SEATS_TOTAL - seatsAvailableFor(showtimeId);
    }
    
-   export function pricingFor(showtime: Showtime, baseMinor: number): Pricing {
+   export function pricingFor(showtime: MockShowtime, baseMinor: number): Pricing {
      return priceFor(
        baseMinor,
        seatsTakenFor(showtime.id),
        SEATS_TOTAL,
        new Date(showtime.startsAt),
        new Date(),
+       /* The cinema's zone, not one global value. A 19:10 screening is an evening
+          show in Liverpool and in Jaipur, and with a single hardcoded zone only
+          one of those two would be true. */
+       zoneOf(showtime),
      );
    }
    
@@ -284,21 +324,31 @@
      });
    }
    
+   /* The cheapest listed seat in this house, which is the base the "from" price
+      and the rate panel are both built on. */
+   const cheapestListed = (showtime: MockShowtime): number =>
+     listedPrice(showtime.currency, hallClassOf(showtime.screenName), "NORMAL");
+   
    /* The percentages for the whole map. Any tier's breakdown answers for all of
       them, because only the base differs, so this uses the cheapest. */
    export function priceRatesFor(showtimeId: number): PriceRate[] {
      const showtime = findShowtime(showtimeId);
      if (!showtime) return [];
-     const cheapest = LISTED_PRICE_MINOR[hallClassOf(showtime.screenName)].NORMAL;
-     return asRates(pricingFor(showtime, cheapest));
+     return asRates(pricingFor(showtime, cheapestListed(showtime)));
    }
    
    /* The cheapest seat actually on sale, for the showtimes list. */
-   export function fromPriceFor(showtimeId: number): { basePriceMinor: number; priceMinor: number } {
+   export function fromPriceFor(showtimeId: number): {
+     basePriceMinor: number;
+     priceMinor: number;
+   } {
      const showtime = findShowtime(showtimeId);
      if (!showtime) return { basePriceMinor: 0, priceMinor: 0 };
-     const cheapest = LISTED_PRICE_MINOR[hallClassOf(showtime.screenName)].NORMAL;
-     return { basePriceMinor: cheapest, priceMinor: pricingFor(showtime, cheapest).adjustedMinor };
+     const cheapest = cheapestListed(showtime);
+     return {
+       basePriceMinor: cheapest,
+       priceMinor: pricingFor(showtime, cheapest).adjustedMinor,
+     };
    }
    
    /* ----------------------------------------------------------------- writes */

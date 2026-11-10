@@ -1,0 +1,133 @@
+.page {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 40px 16px 64px;
+  }
+  
+  .title {
+    font-size: 46px;
+  }
+  
+  .subtitle {
+    margin-top: 8px;
+    font-style: italic;
+    color: var(--color-n700);
+  }
+  
+  .locate {
+    margin-top: 24px;
+  }
+  
+  .locateButton {
+    padding: 10px 16px;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: var(--color-accent-tint);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  
+  .locateButton:hover:not(:disabled) {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  
+  .locateButton:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  
+  .locateNote {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--color-n700);
+  }
+  
+  .group {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--color-divider);
+  }
+  
+  .groupTitle {
+    font-size: 26px;
+  }
+  
+  .cards {
+    margin-top: 16px;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 16px;
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius);
+    text-decoration: none;
+    color: inherit;
+  }
+  
+  .card:hover {
+    background: var(--color-surface);
+  }
+  
+  .cardName {
+    font-family: var(--font-heading);
+    font-size: 22px;
+    line-height: 1.1;
+  }
+  
+  .cardMeta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--color-n700);
+  }
+  
+  /* The distance is the one number on this card worth reading precisely, so it
+     gets the accent rather than the muted text colour. */
+  .badge {
+    padding: 2px 8px;
+    border: 1px solid var(--color-accent);
+    border-radius: 999px;
+    color: var(--color-accent-deep);
+    font-size: 12px;
+  }
+  
+  .cardWhere {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--color-n500);
+  }
+  
+  .skeletons {
+    margin-top: 32px;
+    display: grid;
+    gap: 16px;
+  }
+  
+  @media (min-width: 640px) {
+    .cards {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .title {
+      font-size: 60px;
+    }
+  }
+  
+  @media (min-width: 1024px) {
+    .cards {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }

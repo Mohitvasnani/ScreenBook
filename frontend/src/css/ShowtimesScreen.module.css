@@ -167,3 +167,8 @@
       grid-template-columns: repeat(4, 1fr);
     }
   }
+  .back {
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--color-n700);
+  }

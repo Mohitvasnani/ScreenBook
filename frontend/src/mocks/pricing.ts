@@ -1,24 +1,56 @@
 /* A second implementation of the backend's PricingRules, for demo mode.
-   
+
    Two implementations of one rule set will drift, and that is accepted here for
    one reason: API_MODE defaults to mock, so the deployed demo is what a
    recruiter actually clicks, and a demo where the breakdown never renders does
    not show the feature the wave exists for. The DEMO badge says which mode the
    viewer is in.
-   
+
    The bands below mirror screenbook.pricing.* in application.properties. If you
    change one, change both. */
 
    import type { PriceLine, PriceRate, Pricing, Tier } from "@/types/api";
 
+   import { localHourAndDay } from "./zones";
+   
    export type HallClass = "STANDARD" | "LUXURY";
    
-   /* Stands in for hall_class_tier_price in migration V12. Hand-set figures, in
-      paise, not computed from a base plus an uplift. */
-   export const LISTED_PRICE_MINOR: Record<HallClass, Record<Tier, number>> = {
-     STANDARD: { NORMAL: 20_000, PREMIUM: 35_000, EXECUTIVE: 50_000 },
-     LUXURY: { NORMAL: 30_000, PREMIUM: 55_000, EXECUTIVE: 80_000 },
+   /* Stands in for hall_class_tier_price, keyed on currency since V17.
+   
+      Two ladders, never converted between. The INR figures are V12's, in paise;
+      the GBP figures are V18's, in pence. The UK ladder is flatter, 1.8x bottom to
+      top against 2.5x, which is what the two markets look like rather than an
+      oversight.
+   
+      Keyed by currency string rather than a union type, because the server keys it
+      on a currency lookup table and a third currency there should not need a type
+      change here. */
+   export const LISTED_PRICE_MINOR: Record<
+     string,
+     Record<HallClass, Record<Tier, number>>
+   > = {
+     INR: {
+       STANDARD: { NORMAL: 20_000, PREMIUM: 35_000, EXECUTIVE: 50_000 },
+       LUXURY: { NORMAL: 30_000, PREMIUM: 55_000, EXECUTIVE: 80_000 },
+     },
+     GBP: {
+       STANDARD: { NORMAL: 900, PREMIUM: 1_300, EXECUTIVE: 1_600 },
+       LUXURY: { NORMAL: 1_400, PREMIUM: 1_900, EXECUTIVE: 2_500 },
+     },
    };
+   
+   /* A missing currency would make every seat cost NaN, which renders as a blank
+      price rather than an error, so it fails loudly here instead. The server has
+      the same hole closed by a foreign key to the currency table. */
+   export function listedPrice(
+     currency: string,
+     hallClass: HallClass,
+     tier: Tier,
+   ): number {
+     const ladder = LISTED_PRICE_MINOR[currency];
+     if (!ladder) throw new Error(`No price ladder for currency ${currency}.`);
+     return ladder[hallClass][tier];
+   }
    
    const BANDS = {
      occupancy: {
@@ -29,18 +61,10 @@
      },
      leadTime: { imminentHours: 6, imminentBp: 1000, soonHours: 48, soonBp: 500 },
      evening: { fromHour: 17, toHour: 22, bp: 500 },
-     /* 5 is Friday, 6 is Saturday. */
+     /* 5 is Friday, 6 is Saturday, matching Date.getUTCDay. */
      weekend: { days: [5, 6], bp: 500 },
      maxAdjustmentBp: 4000,
    };
-   
-   /* India Standard Time is UTC+5:30 and has no daylight saving, so a fixed
-      offset is exact. The server uses a ZoneId because it has to be correct for
-      zones in general; here one number is honest and avoids an Intl round trip
-      per seat. */
-   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-   
-   const inIndia = (instant: Date) => new Date(instant.getTime() + IST_OFFSET_MS);
    
    /* Half away from zero, in integers. 10000 basis points is 100%. */
    export function applyBp(baseMinor: number, basisPoints: number): number {
@@ -85,16 +109,24 @@
      return line("LEAD_TIME", "Plenty of time", 0, baseMinor);
    }
    
-   function timeOfDayLine(baseMinor: number, startsAt: Date): PriceLine {
-     const hour = inIndia(startsAt).getUTCHours();
+   /* Evening and weekend are questions about the time where the cinema is, so the
+      zone arrives as an argument. The previous version used one fixed IST offset,
+      which was right while every cinema was in India and would have called a 19:00
+      Liverpool screening a small-hours one.
+   
+      This is the change PricingRules still needs on the server, where the zone is
+      read from screenbook.pricing.zone rather than from cinema.timezone. For now
+      the mock is the more correct of the two. */
+   function timeOfDayLine(baseMinor: number, startsAt: Date, timeZone: string): PriceLine {
+     const { hour } = localHourAndDay(startsAt, timeZone);
      const evening = hour >= BANDS.evening.fromHour && hour <= BANDS.evening.toHour;
      return evening
        ? line("TIME_OF_DAY", "Evening show", BANDS.evening.bp, baseMinor)
        : line("TIME_OF_DAY", "Daytime show", 0, baseMinor);
    }
    
-   function dayOfWeekLine(baseMinor: number, startsAt: Date): PriceLine {
-     const day = inIndia(startsAt).getUTCDay();
+   function dayOfWeekLine(baseMinor: number, startsAt: Date, timeZone: string): PriceLine {
+     const { day } = localHourAndDay(startsAt, timeZone);
      return BANDS.weekend.days.includes(day)
        ? line("DAY_OF_WEEK", "Weekend", BANDS.weekend.bp, baseMinor)
        : line("DAY_OF_WEEK", "Weekday", 0, baseMinor);
@@ -110,12 +142,13 @@
      seatsTotal: number,
      startsAt: Date,
      now: Date,
+     timeZone: string,
    ): Pricing {
      const rules: PriceLine[] = [
        occupancyLine(baseMinor, seatsTaken, seatsTotal),
        leadTimeLine(baseMinor, startsAt, now),
-       timeOfDayLine(baseMinor, startsAt),
-       dayOfWeekLine(baseMinor, startsAt),
+       timeOfDayLine(baseMinor, startsAt, timeZone),
+       dayOfWeekLine(baseMinor, startsAt, timeZone),
      ];
    
      const totalBp = rules.reduce((sum, rule) => sum + rule.basisPoints, 0);

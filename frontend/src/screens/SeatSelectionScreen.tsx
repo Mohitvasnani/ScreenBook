@@ -35,8 +35,11 @@ export function SeatSelectionScreen() {
   const [note, setNote] = useState<string | null>(null);
 
   const seats = useApi(() => api.getSeatMap(showtimeId), `seats:${showtimeId}`);
-  const showtimes = useApi(() => api.listShowtimes(), "showtimes");
-  const showtime = showtimes.data?.find((s) => s.id === showtimeId);
+  const showtimeQuery = useApi(
+    () => api.getShowtime(showtimeId),
+    `showtime:${showtimeId}`,
+  );
+  const showtime = showtimeQuery.data;
 
   /* The map is the authority on what is free. Whenever it reloads, drop any
      chosen seat that is no longer available. Without this, a seat someone else
@@ -155,8 +158,14 @@ export function SeatSelectionScreen() {
 
   return (
     <div className={styles.page}>
-      <Link href="/" className={styles.back}>
-        ← All showtimes
+            {/* Back to the cinema you came from, not to the top of the site. The
+          showtime carries its cinemaId, which is the reason that field exists:
+          this page is reachable by URL with nothing else in it. */}
+      <Link
+        href={showtime ? `/cinemas/${showtime.cinemaId}` : "/"}
+        className={styles.back}
+      >
+        ← {showtime ? "Back to this cinema" : "All cinemas"}
       </Link>
 
       <h1 className={styles.title}>{showtime?.filmTitle ?? "\u00a0"}</h1>

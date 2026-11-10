@@ -45,10 +45,16 @@ export function CheckoutScreen() {
   const [problem, setProblem] = useState<string | null>(null);
 
   const holdQuery = useApi(() => api.getHold(holdId), `hold:${holdId}`);
-  const showtimes = useApi(() => api.listShowtimes(), "showtimes");
-
   const hold = holdQuery.data;
-  const showtime = showtimes.data?.find((s) => s.id === hold?.showtimeId);
+
+  /* Conditional, because the hold loads first and its showtimeId is what this
+     asks for. useApi refetches when the key changes, so the real request goes
+     out on the render after the hold arrives. */
+  const showtimeQuery = useApi(
+    () => (hold ? api.getShowtime(hold.showtimeId) : Promise.resolve(null)),
+    `checkout-showtime:${hold?.showtimeId ?? "none"}`,
+  );
+  const showtime = showtimeQuery.data;
 
   /* Names and plurals come from the hold, not the showtime, because a hold can
      cover one seat or six and the copy has to read correctly either way. */

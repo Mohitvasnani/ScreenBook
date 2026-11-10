@@ -6,8 +6,9 @@ construction rather than by discovery.
 
 - Base path: `/api`
 - All timestamps ISO-8601 UTC with a trailing `Z`
-- All money in integer minor units (paise), never floats. Prices are INR,
-  calibrated against published Jaipur cinema prices
+- All money in integer minor units, never floats, with 100 to the major unit.
+  Every amount carries its own `currency`, taken from the cinema: paise at an
+  Indian cinema, pence at a UK one. Nothing converts between them anywhere
 - Errors use RFC 9457 problem details (`application/problem+json`)
 - Hold TTL: 300 seconds
 - Up to 3 seats per hold as a guest, 6 signed in, claimed all or nothing
@@ -22,9 +23,10 @@ construction rather than by discovery.
 - Prices move with demand. The showtimes list and the seat map quote live
   prices; a hold freezes its price and the booking charges that frozen figure
 
-Fifteen endpoints. Seven are the booking flow: four doing the work, two `GET`s
-that exist so the client's URLs survive a page refresh, one releasing a hold
-early. The other eight are accounts: six added in wave 3, and password reset in
+Nineteen endpoints. Three are cinemas, added in wave 5, which is where a
+customer starts: the map, the nearest few, and one building. Eight are the
+booking flow: four doing the work, three `GET`s that exist
+so the client's URLs survive a page refresh, one releasing a hold early. The other eight are accounts: six added in wave 3, and password reset in
 wave 4.
 
 ---
@@ -117,9 +119,140 @@ the freeze they would be charged a number they were never shown.
 
 ---
 
-## 1. `GET /api/showtimes`
+## 1. `GET /api/cinemas`
 
-List all showtimes.
+Every cinema, for the map and for the city picker to group.
+
+**200**
+
+```json
+[
+  {
+    "id": 42,
+    "name": "Everyman",
+    "city": "Liverpool",
+    "state": "England",
+    "latitude": 53.407184,
+    "longitude": -2.98644,
+    "currency": "GBP",
+    "screenCount": 3
+  }
+]
+```
+
+No pagination and no `city` parameter. 130 rows is one response, and the client
+already holds all of them to draw markers, so a city filter would be a second
+round trip for what a local `filter()` does.
+
+`latitude` and `longitude` as two numbers rather than GeoJSON. A marker needs
+two numbers, and MapLibre takes them as `[lon, lat]`, so a `Point` wrapper would
+be a shape every client unwraps for nothing.
+
+No `address`. 130 addresses is most of this payload's weight and a marker does
+not show one. Section 3 has it.
+
+`screenCount` is the cinema's own screens, counted over a left join, so a cinema
+with none still appears on the map as a building that exists.
+
+---
+
+## 2. `GET /api/cinemas/nearest`
+
+The nearest few to a point. This is what makes 130 buildings usable from
+wherever the customer is standing.
+
+| | | |
+|---|---|---|
+| `lat` | required | `-90` to `90` |
+| `lon` | required | `-180` to `180` |
+| `limit` | optional | defaults to 5, clamped to 20 |
+
+**200**
+
+```json
+[
+  {
+    "id": 42,
+    "name": "Everyman",
+    "city": "Liverpool",
+    "state": "England",
+    "latitude": 53.407184,
+    "longitude": -2.98644,
+    "currency": "GBP",
+    "screenCount": 3,
+    "distanceMetres": 718
+  }
+]
+```
+
+`ORDER BY location <-> point LIMIT n` against the GiST index, so this walks the
+index nearest-first and stops, rather than computing 130 distances and sorting
+them. At 130 rows that saves nothing; the index is there for the shape of the
+query.
+
+The ordering and the reported distance use the same sphere model. `ST_Distance`
+defaults to the spheroid and the `<->` operator does not, and mixing them lets a
+list show 2,411m above 2,409m. The sphere is out by around 0.3 percent, which at
+this range is a few metres.
+
+`distanceMetres` is an integer. `ST_Distance` returns a double and sub-metre
+precision on the position of a building is noise, so it is rounded once, here,
+rather than by every client.
+
+No radius parameter. "The nearest five" is always answerable and a radius is
+not: 50km finds four cinemas from Liverpool and none from a village, and an
+empty list is a worse answer than a long drive. The distance is reported and
+the customer judges.
+
+A `limit` above the cap is clamped rather than rejected. A client that does not
+know the cap should get an answer, not an error it has to guess its way out of.
+
+**422** `validation-failed` for a latitude or longitude outside its range, or a
+`limit` below 1. A missing or unparseable `lat` or `lon` is a **400** from
+Spring's own parameter binding, in the same problem+json shape.
+
+---
+
+## 3. `GET /api/cinemas/{cinemaId}`
+
+One cinema.
+
+**200**
+
+```json
+{
+  "id": 42,
+  "name": "Everyman",
+  "city": "Liverpool",
+  "state": "England",
+  "address": "Whitechapel, Cavern Quarter, L1 6DA",
+  "latitude": 53.407184,
+  "longitude": -2.98644,
+  "currency": "GBP",
+  "timezone": "Europe/London",
+  "screenCount": 3
+}
+```
+
+`timezone` is sent because showtimes are formatted in the cinema's local time,
+not the browser's. Someone in Liverpool looking at Jaipur should see 20:00,
+which is when the film starts for the people in the room, and `startsAt` is an
+instant so the client cannot work that out alone.
+
+No list of screens. A customer picks a showtime, not a screen, and the showtimes
+list already carries `screenName`.
+
+**404** `not-found` for an unknown id.
+
+---
+
+## 4. `GET /api/showtimes`
+
+What is on at one cinema.
+
+| | | |
+|---|---|---|
+| `cinemaId` | required | the cinema whose screenings to list |
 
 **200**
 
@@ -127,6 +260,7 @@ List all showtimes.
 [
   {
     "id": 1,
+    "cinemaId": 7,
     "filmTitle": "The Long Quiet",
     "screenName": "Screen 1",
     "startsAt": "2026-11-02T19:30:00Z",
@@ -140,7 +274,18 @@ List all showtimes.
 ]
 ```
 
-No pagination. The dataset is small and bounded by what a cinema screens in a week.
+`cinemaId` is required and has no default. There is no sensible one. The 130
+cinemas have 6,366 upcoming screenings between them, so the twelve soonest on
+earth are four arbitrary buildings in two countries and nobody's listing. "What
+is on near me" is answered by choosing a cinema first, which is what sections 1
+and 2 are for.
+
+Three different answers, kept distinct. A cinema that exists with nothing
+scheduled is an empty list. An id no cinema has is a **404** `not-found`. A
+missing `cinemaId` is a **400** from Spring's parameter binding.
+
+No pagination. The dataset is bounded by what one cinema screens in a week, and
+the response is capped at `screenbook.showtimes.max-results`.
 
 Only screenings that have not started are listed, on `starts_at > now()`. A
 screening disappears from this list and stops being claimable at the same
@@ -161,9 +306,39 @@ map and the checkout.
 `seatsAvailable` counts seats, not bookings. It is derived from
 `showtime_occupancy`, the same view the pricing rules read.
 
+`cinemaId` is sent even though the caller supplied it. The caller of this
+endpoint does not need it; whoever follows a link to one of these rows does.
+Section 5 and the seat map are both reached by URL with a showtime id and
+nothing else, so without this field a page has no route back to the building.
+
 ---
 
-## 2. `GET /api/showtimes/{showtimeId}/seats`
+## 5. `GET /api/showtimes/{showtimeId}`
+
+One screening.
+
+**200** The same object as one row of section 4.
+
+Exists because section 4 is scoped to a cinema and two screens are not. The
+seat map and the checkout are reached by URL carrying a showtime id and nothing
+else, so neither can ask for a listing to find their screening in. Before this
+they listed every screening and filtered client-side, which stopped being
+possible the moment a listing needed a cinema.
+
+No `starts_at` filter, unlike section 4, and that is the difference between the
+two. A listing shows what can still be booked. This answers what a screening
+is, so a confirmation page or a bookmarked seat map opened after the film
+started still renders. Whether it can be booked is section 7's answer, and that
+rejects a started showtime with a **409**.
+
+Prices here are live, exactly as in the listing. A price is only promised once a
+hold exists.
+
+**404** `not-found` for an unknown id.
+
+---
+
+## 6. `GET /api/showtimes/{showtimeId}/seats`
 
 The seat map for one showtime.
 
@@ -275,7 +450,7 @@ and the other with a `CASE` per seat.
 
 ---
 
-## 3. `POST /api/holds`
+## 7. `POST /api/holds`
 
 Claim one to six seats for 300 seconds, all or nothing.
 
@@ -447,7 +622,7 @@ seat that has gone.
 
 ---
 
-## 4. `GET /api/holds/{holdId}`
+## 8. `GET /api/holds/{holdId}`
 
 Read a hold. Exists so the checkout page renders on a cold load rather than only
 when the user arrives by clicking.
@@ -498,7 +673,7 @@ is one tier.
 
 ---
 
-## 5. `POST /api/bookings`
+## 9. `POST /api/bookings`
 
 Convert a hold into a booking.
 
@@ -518,7 +693,7 @@ decide which to trust.
 
 `email` is optional and exists for guests, who otherwise have nothing but the
 reference. It is stored so a confirmation can be sent and is never used to
-decide who a booking belongs to, for the reason in section 15. A signed-in
+decide who a booking belongs to, for the reason in section 19. A signed-in
 booking is found by its account instead, and the account comes from the session
 cookie rather than the body, because a client-supplied user id is a
 client-supplied claim about who it is.
@@ -609,7 +784,7 @@ different hold. **404** unknown hold.
 
 ---
 
-## 6. `GET /api/bookings/{bookingReference}`
+## 10. `GET /api/bookings/{bookingReference}`
 
 Read a booking. Same body as above. **404** if unknown.
 
@@ -620,7 +795,7 @@ People read references out loud; UUIDs do not survive that.
 
 ---
 
-## 7. `DELETE /api/holds/{holdId}`
+## 11. `DELETE /api/holds/{holdId}`
 
 Release a hold before it expires.
 
@@ -636,7 +811,7 @@ between a hold that models intent and one that just models a timeout.
 
 ---
 
-## 8. `POST /api/auth/signup`
+## 12. `POST /api/auth/signup`
 
 Create an account. Signing up signs you in, because redirecting to a login form
 you have just proved you can pass is friction for nothing.
@@ -688,7 +863,7 @@ instead of quietly creating a second account for the same person.
 
 ---
 
-## 9. `POST /api/auth/login`
+## 13. `POST /api/auth/login`
 
 **Request**
 
@@ -711,7 +886,7 @@ dummy hash, so the two cases cannot be separated by timing either.
 
 ---
 
-## 10. `POST /api/auth/refresh`
+## 14. `POST /api/auth/refresh`
 
 Exchange the refresh cookie for a new pair. No request body; reads `sb_refresh`.
 
@@ -742,7 +917,7 @@ cost exists for low-entropy human passwords.
 
 ---
 
-## 11. `POST /api/auth/logout`
+## 15. `POST /api/auth/logout`
 
 No body. Reads `sb_refresh`, revokes it, clears both cookies.
 
@@ -751,7 +926,7 @@ in is not an error, the same way releasing a lapsed hold is not.
 
 ---
 
-## 12. `POST /api/auth/forgot-password`
+## 16. `POST /api/auth/forgot-password`
 
 Starts a password reset.
 
@@ -800,7 +975,7 @@ to do.
 
 ---
 
-## 13. `POST /api/auth/reset-password`
+## 17. `POST /api/auth/reset-password`
 
 Finishes it.
 
@@ -877,7 +1052,7 @@ one, and revoking again buys nothing.
 
 ---
 
-## 14. `GET /api/me`
+## 18. `GET /api/me`
 
 **200** the same body as signup. **401** with no valid session.
 
@@ -888,7 +1063,7 @@ cache.
 
 ---
 
-## 15. `GET /api/me/bookings`
+## 19. `GET /api/me/bookings`
 
 Every booking belonging to the signed-in account, newest first.
 
@@ -974,7 +1149,7 @@ Accounts change three things and nothing else.
 
 1. **The seat cap.** 3 seats per hold as a guest, 6 signed in.
 2. **Attribution.** A booking confirmed while signed in records `user_id` and
-   appears in section 15.
+   appears in section 19.
 3. **Nothing else.** Every endpoint in sections 1 to 7 behaves exactly as it did
    without a session. Guest checkout is not a fallback path, it is the default
    one.
@@ -1003,7 +1178,7 @@ than gaps:
   409 or claims seats that lapse in five minutes. A duplicated booking is a
   seat somebody paid for twice.
 - **Email verification.** Nothing proves an address belongs to whoever typed
-  it, which is why section 15 matches on `user_id` and `booking_by_email` goes
+  it, which is why section 19 matches on `user_id` and `booking_by_email` goes
   unused. Completing a password reset does prove control of an address, but
   only for the accounts that reset, so a feature built on it would work for a
   minority of users and real verification would still be needed.

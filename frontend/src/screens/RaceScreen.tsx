@@ -14,7 +14,17 @@ import { clockTime, seatLabel } from "@/utils/format";
 type Attempt = LaneResult & { holdId?: string };
 
 export function RaceScreen() {
-  const showtimes = useApi(() => api.listShowtimes(), "showtimes");
+    /* This page is about one seat at one screening, so which building it is in
+     proves nothing either way. It takes the first cinema rather than adding a
+     third select: the showtime and seat pickers are the controls that matter
+     here, and a cinema picker would just be more to read. */
+     const cinemas = useApi(() => api.listCinemas(), "race-cinemas");
+     const cinemaId = cinemas.data?.[0]?.id;
+   
+     const showtimes = useApi(
+       () => (cinemaId ? api.listShowtimes(cinemaId) : Promise.resolve(null)),
+       `race-showtimes:${cinemaId ?? "none"}`,
+     );
 
   const [showtimeId, setShowtimeId] = useState<number | null>(null);
   const showtime = showtimes.data?.find((s) => s.id === showtimeId) ?? showtimes.data?.[0];

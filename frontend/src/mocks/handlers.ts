@@ -8,36 +8,60 @@
    import { HOLD_TTL_SECONDS, MAX_SEATS_MEMBER } from "@/services/apiConfig";
    import { PROBLEM_BASE, type ProblemDetail } from "@/services/problemDetails";
    import type {
-     HeldSeat,
-     Hold,
-     HoldDetail,
-     HoldStatus,
-     SeatMap,
-     Showtime,
-     UnavailableSeat,
-   } from "@/types/api";
-   import {
-     createBooking,
-     createHold,
-     findIdempotency,
-     findShowtime,
-     fromPriceFor,
-     getBooking,
-     getHoldRecord,
-     priceRatesFor,
-     rememberIdempotency,
-     releaseHold,
-     remainingSeconds,
-     seatMapFor,
-     seatsAvailableFor,
-     seatsInOrder,
-     SHOWTIMES,
-     type SeatPosition,
-   } from "./db";
+    Cinema,
+    CinemaDetail,
+    HeldSeat,
+    Hold,
+    HoldDetail,
+    HoldStatus,
+    NearestCinema,
+    SeatMap,
+    Showtime,
+    UnavailableSeat,
+  } from "@/types/api";
+  import { CINEMAS, cinemaById, nearest, toDetail, toSummary } from "./cinemas";
+  import {
+    createBooking,
+    createHold,
+    findIdempotency,
+    findShowtime,
+    fromPriceFor,
+    getBooking,
+    getHoldRecord,
+    priceRatesFor,
+    rememberIdempotency,
+    releaseHold,
+    remainingSeconds,
+    seatMapFor,
+    seatsAvailableFor,
+    seatsInOrder,
+    showtimesForCinema,
+    type SeatPosition,
+  } from "./db";
    import { visibleRules } from "./pricing";
    
    /* Enough latency that loading states are real rather than theoretical. */
    const LATENCY_MS = 180;
+      /* Mirrors screenbook.cinemas.nearest-default-results and
+      nearest-max-results in application.properties. If you change one, change
+      both, same as the pricing bands. */
+      const NEAREST_DEFAULT = 5;
+      const NEAREST_MAX = 20;
+
+      /* Spring's own 400, not one of our problem types. A missing or unparseable
+      query parameter never reaches a controller, so there is nothing to throw an
+      ApiException: spring.mvc.problemdetails.enabled turns Spring's internal
+      exception into problem+json with type about:blank instead. Reproduced
+      exactly, so the client's unknown-slug path is exercised in demo mode rather
+      than only in production. */
+      const badRequest = (instance: string, detail: string) =>
+        problemResponse({
+          type: "about:blank",
+          title: "Bad Request",
+          status: 400,
+          detail,
+          instance,
+        });
    
    function problem(
      slug: string,
@@ -108,15 +132,150 @@
    }
    
    export const handlers = [
-     http.get("/api/showtimes", async () => {
-       await delay(LATENCY_MS);
-       const body: Showtime[] = SHOWTIMES.map((showtime) => ({
-         ...showtime,
-         ...fromPriceFor(showtime.id),
-         seatsAvailable: seatsAvailableFor(showtime.id),
-       }));
-       return HttpResponse.json(body);
-     }),
+    http.get("/api/cinemas", async () => {
+      await delay(LATENCY_MS);
+      const body: Cinema[] = CINEMAS.map(toSummary);
+      return HttpResponse.json(body);
+    }),
+
+    /* Before the :cinemaId route below, and that is load-bearing. MSW matches
+       handlers in array order, so a parameter route declared first would match
+       /api/cinemas/nearest and try to read "nearest" as an id. Spring prefers a
+       literal path segment regardless of order, so this is a difference between
+       the two routers rather than something the contract says. */
+    http.get("/api/cinemas/nearest", async ({ request }) => {
+      await delay(LATENCY_MS);
+
+      const params = new URL(request.url).searchParams;
+      const lat = Number(params.get("lat"));
+      const lon = Number(params.get("lon"));
+      const rawLimit = params.get("limit");
+
+      /* Absent and unparseable are both 400 here, as they are on the server:
+         neither ever reaches the controller's own validation. Number(null) is 0,
+         which would otherwise read as a valid coordinate in the Gulf of Guinea,
+         so the presence check cannot be skipped. */
+      for (const name of ["lat", "lon"] as const) {
+        const value = params.get(name);
+        if (value === null) {
+          return badRequest(
+            "/api/cinemas/nearest",
+            `Required request parameter '${name}' for method parameter type double is not present.`,
+          );
+        }
+        if (!Number.isFinite(Number(value))) {
+          return badRequest(
+            "/api/cinemas/nearest",
+            `Failed to convert value of type 'java.lang.String' to required type 'double'; nested exception is java.lang.NumberFormatException: For input string: "${value}"`,
+          );
+        }
+      }
+
+      /* 422 rather than 400 for a number that parsed but is not a coordinate,
+         matching CinemaController: the request was understood, the value is
+         wrong. */
+      if (lat < -90 || lat > 90) {
+        return invalid(
+          "/api/cinemas/nearest",
+          `lat must be between -90 and 90, got ${lat}.`,
+        );
+      }
+      if (lon < -180 || lon > 180) {
+        return invalid(
+          "/api/cinemas/nearest",
+          `lon must be between -180 and 180, got ${lon}.`,
+        );
+      }
+
+      const requested = rawLimit === null ? NEAREST_DEFAULT : Number(rawLimit);
+      if (!Number.isInteger(requested) || requested < 1) {
+        return invalid(
+          "/api/cinemas/nearest",
+          `limit must be at least 1, got ${requested}.`,
+        );
+      }
+
+      const body: NearestCinema[] = nearest(
+        lat,
+        lon,
+        Math.min(requested, NEAREST_MAX),
+      );
+      return HttpResponse.json(body);
+    }),
+
+    http.get("/api/cinemas/:cinemaId", async ({ params }) => {
+      await delay(LATENCY_MS);
+      const cinemaId = Number(params.cinemaId);
+      const cinema = Number.isInteger(cinemaId) ? cinemaById(cinemaId) : undefined;
+
+      if (!cinema) {
+        return notFound(
+          `/api/cinemas/${params.cinemaId}`,
+          `No cinema with id ${params.cinemaId}.`,
+        );
+      }
+
+      const body: CinemaDetail = toDetail(cinema);
+      return HttpResponse.json(body);
+    }),
+    
+    http.get("/api/showtimes", async ({ request }) => {
+      await delay(LATENCY_MS);
+
+      const raw = new URL(request.url).searchParams.get("cinemaId");
+
+      /* The three answers the server distinguishes, in the order it reaches
+         them: no parameter is a 400 before any controller runs, an unknown
+         cinema is a 404, and a real cinema with nothing scheduled is an empty
+         list. Collapsing any two of them would make the client guess. */
+      if (raw === null) {
+        return badRequest(
+          "/api/showtimes",
+          "Required request parameter 'cinemaId' for method parameter type long is not present.",
+        );
+      }
+
+      const cinemaId = Number(raw);
+      if (!Number.isInteger(cinemaId)) {
+        return badRequest(
+          "/api/showtimes",
+          `Failed to convert value of type 'java.lang.String' to required type 'long'; nested exception is java.lang.NumberFormatException: For input string: "${raw}"`,
+        );
+      }
+
+      if (!cinemaById(cinemaId)) {
+        return notFound("/api/showtimes", `No cinema with id ${cinemaId}.`);
+      }
+
+      const body: Showtime[] = showtimesForCinema(cinemaId).map((showtime) => ({
+        ...showtime,
+        ...fromPriceFor(showtime.id),
+        seatsAvailable: seatsAvailableFor(showtime.id),
+      }));
+      return HttpResponse.json(body);
+    }),
+
+    http.get("/api/showtimes/:showtimeId", async ({ params }) => {
+      await delay(LATENCY_MS);
+      const showtimeId = Number(params.showtimeId);
+      const showtime = Number.isInteger(showtimeId) ? findShowtime(showtimeId) : undefined;
+
+      if (!showtime) {
+        return notFound(
+          `/api/showtimes/${params.showtimeId}`,
+          `No showtime with id ${params.showtimeId}.`,
+        );
+      }
+
+      /* No starts_at filter, matching the server: a screening stays readable
+         after it has started so a bookmarked page still renders. */
+      const body: Showtime = {
+        ...showtime,
+        ...fromPriceFor(showtime.id),
+        seatsAvailable: seatsAvailableFor(showtime.id),
+      };
+      return HttpResponse.json(body);
+    }),
    
      http.get("/api/showtimes/:showtimeId/seats", async ({ params }) => {
        await delay(LATENCY_MS);

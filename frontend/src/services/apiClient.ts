@@ -14,6 +14,9 @@
      Showtime,
      SignupRequest,
      User,
+     Cinema,
+     CinemaDetail,
+     NearestCinema,
    } from "@/types/api";
    
    /* Spring's CookieCsrfTokenRepository.withHttpOnlyFalse() writes this one so the
@@ -167,18 +170,45 @@
    }
    
    export const api = {
-     listShowtimes: () => request<Showtime[]>("/showtimes"),
-   
-     getSeatMap: (showtimeId: number) =>
-       request<SeatMap>(`/showtimes/${showtimeId}/seats`),
-   
-     createHold: (showtimeId: number, seatIds: number[]) =>
-       request<Hold>("/holds", {
-         method: "POST",
-         body: JSON.stringify({ showtimeId, seatIds }),
-       }),
-   
-     getHold: (holdId: string) => request<HoldDetail>(`/holds/${holdId}`),
+    listCinemas: () => request<Cinema[]>("/cinemas"),
+
+    /* URLSearchParams rather than template interpolation, so a coordinate
+       never needs escaping by hand. limit is omitted when absent rather than
+       sent empty, because the server reads an absent parameter as "use the
+       default" and an unparseable one as a 400. */
+    nearestCinemas: (lat: number, lon: number, limit?: number) =>
+      request<NearestCinema[]>(
+        `/cinemas/nearest?${new URLSearchParams({
+          lat: String(lat),
+          lon: String(lon),
+          ...(limit === undefined ? {} : { limit: String(limit) }),
+        })}`,
+      ),
+
+    getCinema: (cinemaId: number) => request<CinemaDetail>(`/cinemas/${cinemaId}`),
+
+    /* cinemaId is required, as it is on the server. A call with no cinema is
+       not a listing anyone can read, so it is a type error here rather than a
+       400 at runtime. */
+       listShowtimes: (cinemaId: number) =>
+        request<Showtime[]>(`/showtimes?cinemaId=${cinemaId}`),
+  
+      /* One screening. The list is scoped to a cinema, and a page reached by URL
+         with only a showtime id has no cinema to scope a list with, which is what
+         three screens were doing by listing twelve to find one. */
+      getShowtime: (showtimeId: number) =>
+        request<Showtime>(`/showtimes/${showtimeId}`),
+  
+      getSeatMap: (showtimeId: number) =>
+        request<SeatMap>(`/showtimes/${showtimeId}/seats`),
+  
+      createHold: (showtimeId: number, seatIds: number[]) =>
+        request<Hold>("/holds", {
+          method: "POST",
+          body: JSON.stringify({ showtimeId, seatIds }),
+        }),
+  
+      getHold: (holdId: string) => request<HoldDetail>(`/holds/${holdId}`),
    
      /* Hand a seat back before the hold lapses, rather than leaving it locked for
         the rest of its five minutes. */

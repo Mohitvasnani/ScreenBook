@@ -49,3 +49,36 @@
   export const seatNames = (
     seats: { rowLabel: string; seatNumber: number }[],
   ): string => seats.map((s) => seatLabel(s.rowLabel, s.seatNumber)).join(", ");
+
+    /* The cinema's clock, not the browser's.
+
+     clockTime and dayAndTime above read the viewer's zone, which was right when
+     every screening was in one building. A 20:00 Jaipur screening is 20:00 to
+     the people in the room, and startsAt is an instant, so without the cinema's
+     zone a Liverpool viewer reads it as 14:30 and the evening pricing band makes
+     no sense next to it. */
+     export function clockTimeAt(iso: string, timeZone: string): string {
+      return new Date(iso).toLocaleTimeString("en-GB", {
+        timeZone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    }
+  
+    export function dayAt(iso: string, timeZone: string): string {
+      return new Date(iso).toLocaleDateString("en-GB", {
+        timeZone,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      });
+    }
+  
+    /* Metres into something a person reads. Under a kilometre rounds to the
+       nearest 50, because a cinema is not located to the metre and "718 m" claims
+       a precision the coordinate does not have. Above it, one decimal. */
+    export function distance(metres: number): string {
+      if (metres < 1000) return `${Math.round(metres / 50) * 50} m`;
+      return `${(metres / 1000).toFixed(1)} km`;
+    }
