@@ -190,6 +190,69 @@ having exported anything, and sets `screenbook.cookies.secure=false`. A
 profile-specific file outranks `application.properties`, so the placeholders
 there are never evaluated during a test run.
 
+### Three ways a local run fails that are not the application
+
+All three cost a morning on 10 November. None produces an error message that
+points at the real cause.
+
+**A native Postgres can hold 5432 while Docker appears to win it.** The
+September setup installed PostgreSQL 18 as a Windows service,
+`postgresql-x64-18`, and it was still running. Docker Desktop published 5432
+anyway, with a healthy container and no "port is already allocated", because it
+binds through its own proxy rather than directly. So `docker compose ps` looked
+correct while the application, Flyway and DBeaver were all connected to the
+native server. The symptom was `CREATE EXTENSION postgis` failing in `V15` with
+"the extension must first be installed on the system where PostgreSQL is
+running", which is true and describes a server nobody meant to use.
+
+The reliable tell is the database list. Ask the container directly and compare:
+
+```powershell
+docker compose exec postgres psql -U postgres -c "\l"
+```
+
+A container whose volume was just recreated cannot hold databases from other
+projects. If the client sees `cinebook` and `warmup` and the container does not,
+they are two different servers.
+
+The fix, from an elevated PowerShell:
+
+```powershell
+Stop-Service postgresql-x64-18
+Set-Service postgresql-x64-18 -StartupType Manual
+```
+
+`Manual` matters more than `Stop`. Without it the service returns on the next
+reboot and the whole thing repeats, months later, with no memory of this.
+
+**A green test suite does not mean a local run works.** Testcontainers pulls
+`postgis/postgis:18-3.6-alpine` itself and never touches `localhost:5432`, so
+the suite was passing on `V18` while the local database was still on `V14`.
+The two environments share migrations and nothing else.
+
+**The Gradle daemon has its own environment.** `setx` writes user-level
+variables that only reach shells started after it runs, and `bootRun` launches
+the application as a child of a long-lived daemon process, so even a brand new
+terminal can hand the app a stale environment and `JWT_SECRET` resolves to
+nothing. Stop the daemons first:
+
+```powershell
+.\gradlew --stop
+```
+
+The same applies to IntelliJ, which caches the environment it was launched
+with. Restart the IDE itself, not just the run configuration.
+
+**Rebuilding the database.** `V15` creates the PostGIS extension, so a volume
+created by the plain `postgres:18-alpine` image cannot run the migrations. The
+`-v` is the part that matters; without it Docker keeps the old data directory
+and the new image starts on top of it.
+
+```powershell
+docker compose down -v
+docker compose up -d
+```
+
 ### Render
 
 ```

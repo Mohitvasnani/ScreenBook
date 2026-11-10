@@ -1,5 +1,7 @@
 # ScreenBook
 
+[![CI](https://github.com/Mohitvasnani/ScreenBook/actions/workflows/ci.yml/badge.svg)](https://github.com/Mohitvasnani/ScreenBook/actions/workflows/ci.yml)
+
 A cinema seat booking service built around one problem: when two people claim
 the same seat at the same moment, exactly one must win.
 
@@ -95,15 +97,20 @@ SELECT st.id AS showtime_id, s.id AS seat_id, s.row_label, s.seat_number,
          ELSE 'AVAILABLE'
        END AS status,
        s.tier,
-       st.price_minor + t.price_delta_minor AS price_minor
+       p.price_minor AS base_price_minor
 FROM showtime st
-JOIN seat      s ON s.screen_id = st.screen_id
-JOIN seat_tier t ON t.code      = s.tier;
+JOIN screen    sc ON sc.id        = st.screen_id
+JOIN seat      s  ON s.screen_id  = st.screen_id
+JOIN seat_tier t  ON t.code       = s.tier
+JOIN hall_class_tier_price p
+                  ON p.hall_class = sc.hall_class
+                 AND p.tier       = s.tier;
 ```
 
-Price is resolved here too, as the showtime's base plus the tier's uplift, so
+The listed price is resolved here too, from the hall class and the tier, so
 the seat map and the booking path read the same number and a displayed price
-cannot drift from a charged one.
+cannot drift from a charged one. What moves that number is in
+[What a seat costs](#what-a-seat-costs) below.
 
 An expired hold frees its seat the instant it expires, with no sweeper
 involved. A job that deletes old hold rows is then housekeeping, not
@@ -123,6 +130,110 @@ stateDiagram-v2
 and would print a seat twice if two live holds ever existed. Correctness that
 does not depend on a guarantee made somewhere else is worth two extra
 characters.
+
+## What a seat costs
+
+Two halves, and the split is the point. The listed price is data a human
+chose. The rules that move it are a function of live state, so they live in
+Java where they can be tested without a database.
+
+| | Normal | Premium | Executive |
+|---|---|---|---|
+| Standard hall | 200 | 350 | 500 |
+| Luxury hall | 300 | 550 | 800 |
+
+Listed, not base plus a global uplift. One uplift is a huge ladder in a cheap
+hall and nearly flat in an expensive one, and percentage uplifts produce
+prices like 437.50. Every figure above is one a human picked and would be
+willing to print, which is what real cinemas publish.
+
+Four rules move it, each contributing a percentage of the listed price:
+
+| Rule | Bands |
+|---|---|
+| Occupancy | +10% from half full, +20% from 80% |
+| Lead time | +5% inside 48 hours, +10% inside 6 |
+| Time of day | +5% for an evening screening |
+| Day of week | +5% on Friday and Saturday |
+
+They are summed rather than multiplied, so every line of the breakdown is
+independently true. Multiplied, the figure printed beside a rule would depend
+on which rules happened to fire before it. A cap sits underneath at +40%,
+which these four cannot reach between them; it exists so that a mistyped band
+cannot produce a four-figure ticket.
+
+`PricingRules` is a pure function of its arguments. `now` arrives as a
+parameter rather than a `Clock` field, and there is no repository and no
+transaction, which is why its tests are the only ones in the project that do
+not need Docker. Evening and weekend are questions about Indian local time, so
+the zone is configuration and never the server's default.
+
+### A quote is frozen, a listing is not
+
+The seat map quotes live prices and promises nothing. The promise is made when
+a hold is taken, and at that moment the numbers are copied onto it: the listed
+price on `seat_hold`, the adjusted price per seat on `hold_seat`, and one row
+per rule on `hold_price_rule`. Confirming charges the copy.
+
+That is not caution. Occupancy is an input, so recomputing at confirm returns
+a different number whenever somebody else books while the customer is typing
+their email. The rule labels are copied for the same reason the price is:
+rewording a band next month must not retroactively change why last month's
+booking cost what it did.
+
+Occupancy is read inside the seat locks and before the insert, so the figure
+that sets the price is the one that was true at the instant of the claim. Read
+earlier, it prices against a house that has since filled. Read after the
+insert, it counts the customer's own seats and lets them inflate their own
+price.
+
+`PriceFreezeTest` asserts that the number quoted is the number charged.
+
+## Where the data comes from
+
+The cinemas are real. 130 of them across 40 cities, 103 in India and 27 in the
+UK, from OpenStreetMap via Nominatim. Names, coordinates and addresses are
+genuine and every row carries its OSM node or way id in a comment, so any of
+them can be checked. Coverage is uneven on purpose: six cinemas in Kolkata, one
+in Chandigarh, none in Chennai. That is a real gap in open data, and filling it
+with invented rows would hide the only interesting thing about using a real
+source.
+
+Everything else is generated and labelled as such. No chain publishes seat maps
+or showtimes in a form anyone can use, so the 240 screens, 33,752 seats and all
+the prices are invented. A varied room layout gives the identical concurrency
+problem whether it was scraped or generated.
+
+Cinema data © OpenStreetMap contributors, available under the
+[Open Database License](https://www.openstreetmap.org/copyright).
+
+### Screenings are seeded at startup, not by a migration
+
+A migration runs once. Flyway records it as applied and never revisits it, so
+data seeded by one is a photograph of the day it ran, and a demo seeded with a
+week of screenings is empty eight days after deploy.
+
+So the seeder does not seed a week. It states a target state:
+
+> every screen has screenings for the next seven days, at times local to its
+> cinema, and none in the past
+
+and converges to it on every startup. Idempotency is not a feature added on
+top, it falls out of describing a state rather than an action: the second run
+finds the state already true and inserts nothing. Roughly 6,400 screenings
+across 240 screens, created by one `INSERT ... SELECT` rather than 6,400 round
+trips.
+
+`AT TIME ZONE` reads `cinema.timezone`, a column, not a constant. A Jaipur
+screening is scheduled on Jaipur's clock and a Liverpool one on Liverpool's,
+which is why the zone lives on the cinema: a platform operating in two
+countries does not have one evening. Films are assigned off a ring computed
+with `row_number()`, so three films today and forty later run the same
+statement.
+
+Expired screenings are deleted as housekeeping, and only ones with no booking
+and no hold against them. A screening somebody booked a seat at is their
+record, not clutter.
 
 ## Architecture
 
@@ -150,14 +261,14 @@ that there is no lazy loading anywhere, so N+1 queries and
 
 ## API
 
-Thirteen endpoints. Full contract in
+Fifteen endpoints. Full contract in
 [docs/api-contract.md](docs/api-contract.md).
 
 | | |
 |---|---|
 | `GET /api/showtimes` | upcoming screenings with live seat counts |
 | `GET /api/showtimes/{id}/seats` | the seat map, status computed per request |
-| `POST /api/holds` | claim one to six adjacent seats for 300 seconds |
+| `POST /api/holds` | claim adjacent seats for 300 seconds, three as a guest and six signed in |
 | `GET /api/holds/{id}` | read a hold and its remaining time |
 | `DELETE /api/holds/{id}` | release early |
 | `POST /api/bookings` | convert a hold into a booking |
@@ -166,6 +277,8 @@ Thirteen endpoints. Full contract in
 | `POST /api/auth/login` | exchange credentials for session cookies |
 | `POST /api/auth/refresh` | rotate the session, with reuse detection |
 | `POST /api/auth/logout` | revoke the session and clear the cookies |
+| `POST /api/auth/forgot-password` | start a reset, always `202`, tells the caller nothing |
+| `POST /api/auth/reset-password` | set the password and end every session |
 | `GET /api/me` | the signed-in account |
 | `GET /api/me/bookings` | that account's bookings, newest first |
 
@@ -234,19 +347,16 @@ suite on every push.
 
 Deferred with the reasoning recorded, so the omissions read as decisions.
 
-- **Password reset.** Accounts can be created and signed into, but a
-  forgotten password cannot be recovered yet. It needs an email provider,
-  which would be the only third party this service depends on.
 - **Email verification.** Nothing proves an address belongs to whoever typed
   it, which is why my-bookings matches on `user_id` and never on email.
 - **Payment.** `pricePaidMinor` records the price at booking time. No money
   moves.
-- **GraphQL.** Thirteen fixed-shape resources with no over-fetching problem, and
+- **GraphQL.** Fifteen fixed-shape resources with no over-fetching problem, and
   an error model that depends on the HTTP status codes GraphQL discards.
 
 ## Reversed on purpose
 
-Three things were deferred and then built, and why is more informative than
+Four things were deferred and then built, and why is more informative than
 either half alone.
 
 - **Multi-seat holds**, deferred because the single-seat case already
@@ -256,6 +366,12 @@ either half alone.
 - **Idempotency keys**, deferred as mattering only under real retry pressure.
   That was wrong about where the pressure comes from. It is not load, it is one
   person on a bad connection pressing Confirm twice.
+- **Password reset**, deferred because it needs a mail provider and nothing
+  else depended on it. Built once accounts existed, because an account you can
+  be locked out of forever is not really an account. The provider sits behind
+  a `Mailer` interface with a logging implementation, so the suite still needs
+  nothing but Docker, and an unknown address, a rate-limited one and a real
+  one are indistinguishable from outside.
 - **Authentication**, deferred on the grounds that a hold id is already a
   bearer capability and accounts are orthogonal to the concurrency problem.
   That reasoning held: nothing about the locking changed when accounts
@@ -266,6 +382,14 @@ either half alone.
 
 ## Next
 
+- **Cinema endpoints and a map.** The schema and the data are in: screens
+  belong to a cinema, cinemas carry a `geography(Point, 4326)` and a GiST
+  index, so the nearest few come back from one indexed query rather than a
+  widening loop. What is left is exposing them and drawing them.
+- **Real film data** from TMDB, ingested once offline and committed as SQL, so
+  the running service keeps exactly one third-party dependency. It also fills
+  `film.released_on`, which is what makes a weeks-since-release pricing rule
+  testable rather than an opinion.
 - **Email verification**, which is what makes claiming a guest booking by its
   address safe. The `booking_by_email` index already exists for it and goes
   deliberately unused until an address can be proven.
@@ -282,8 +406,9 @@ either half alone.
 | | |
 |---|---|
 | Backend | Java 21, Spring Boot 4.1.1, Spring Security 7, Hibernate 7, Gradle 9.7 |
-| Database | PostgreSQL 18, Flyway 12, HikariCP |
+| Database | PostgreSQL 18 with PostGIS 3.6, Flyway 12, HikariCP |
 | Frontend | Next.js 16.4, React 19, TypeScript, CSS Modules, MSW |
 | Testing | JUnit 5, Testcontainers |
 | Docs | springdoc-openapi, Swagger UI |
+| Mail | Brevo, behind a `Mailer` interface with a logging implementation |
 | Infrastructure | Docker multi-stage, GitHub Actions, Render, Neon, Vercel |
