@@ -26,6 +26,17 @@ public class ShowtimeQuery {
        and a headline price nobody can buy at is exactly what the CMA's pricing
        guidance is about.
 
+       That subquery must filter on currency. Without it, min() runs across
+       every currency in the table and a Jaipur screening advertises from 900,
+       which is nine pounds read as nine rupees. The price table has been
+       keyed on currency since V17 and every join to it has to say so; this is
+       the third place in the wave where forgetting that has caused a bug.
+
+       currency comes from the cinema rather than from showtime.currency. The
+       cinema is where it belongs, because a building does not change
+       currency, and keeping a copy on the screening would be a second source
+       of truth that can disagree with the first.
+
        seats_taken comes from showtime_occupancy rather than being counted here.
        The old version subtracted count(*) from booking and seat_hold, which
        counted bookings and holds rather than seats, so it over-reported
@@ -37,11 +48,12 @@ public class ShowtimeQuery {
                    sc.name            AS screen_name,
                    st.starts_at       AS starts_at,
                    f.runtime_minutes  AS runtime_minutes,
-                   st.currency        AS currency,
+                   ci.currency        AS currency,
 
                    (SELECT min(p.price_minor)
                       FROM hall_class_tier_price p
-                     WHERE p.hall_class = sc.hall_class)   AS base_from_price_minor,
+                     WHERE p.currency   = ci.currency
+                       AND p.hall_class = sc.hall_class)   AS base_from_price_minor,
 
                    occ.seats_taken                         AS seats_taken,
                    occ.seats_total                         AS seats_total
@@ -49,6 +61,7 @@ public class ShowtimeQuery {
             FROM showtime st
             JOIN film   f   ON f.id  = st.film_id
             JOIN screen sc  ON sc.id = st.screen_id
+            JOIN cinema ci  ON ci.id = sc.cinema_id
             JOIN showtime_occupancy occ ON occ.showtime_id = st.id
             WHERE st.starts_at > now()
             ORDER BY st.starts_at

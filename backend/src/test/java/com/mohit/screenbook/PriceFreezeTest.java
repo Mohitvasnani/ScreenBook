@@ -30,7 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("test")
 class PriceFreezeTest {
 
-    /** 50 rupees in paise. Large enough that no rounding could hide it. */
+    /**
+     * 5000 minor units. Fifty rupees against the Indian ladder, which is what
+     * the seeded screenings use. Large enough that no rounding could hide it.
+     */
     private static final int BUMP = 5_000;
 
     @Autowired
@@ -42,7 +45,8 @@ class PriceFreezeTest {
     @Autowired
     JdbcClient jdbc;
 
-    private record Seat(long showtimeId, long seatId, String hallClass, String tier) {
+    private record Seat(long showtimeId, long seatId, String hallClass, String tier,
+                        String currency) {
     }
 
     /**
@@ -68,7 +72,7 @@ class PriceFreezeTest {
         int listedWhenHeld = listedPriceOf(seat.seatId(), seat.showtimeId());
 
         try {
-            bumpListedPrice(seat.hallClass(), seat.tier(), BUMP);
+            bumpListedPrice(seat.currency(), seat.hallClass(), seat.tier(), BUMP);
 
             /* Prove the change actually landed before asserting anything about
                the freeze. Without this the test passes even if nothing was
@@ -85,7 +89,7 @@ class PriceFreezeTest {
             /* The container is per run but the Spring context is shared across
                test classes, so leaving the seed prices edited would make a
                later class price against numbers nobody chose. */
-            bumpListedPrice(seat.hallClass(), seat.tier(), -BUMP);
+            bumpListedPrice(seat.currency(), seat.hallClass(), seat.tier(), -BUMP);
         }
     }
 
@@ -95,28 +99,35 @@ class PriceFreezeTest {
      * vanish from the seat map. The primary key cannot prevent that, because it
      * only stops duplicates.
      *
+     * Currency is in the cross join because the key gained it in V17. Asking
+     * only whether a hall class and tier has some price would pass with the
+     * GBP half of the table missing entirely, and every British seat would
+     * quietly disappear from its seat map.
+     *
      * This is the cheapest possible guard and it fails at build time rather
      * than as an empty row in production.
      */
     @Test
-    @DisplayName("every hall class has a price for every tier")
+    @DisplayName("every currency has a price for every hall class and tier")
     void everyHallClassAndTierHasAPrice() {
         List<String> missing = jdbc.sql("""
-                        SELECT hc.code || '/' || t.code AS combination
-                        FROM hall_class hc
+                        SELECT cu.code || ' ' || hc.code || '/' || t.code AS combination
+                        FROM currency cu
+                        CROSS JOIN hall_class hc
                         CROSS JOIN seat_tier t
                         LEFT JOIN hall_class_tier_price p
-                               ON p.hall_class = hc.code
+                               ON p.currency   = cu.code
+                              AND p.hall_class = hc.code
                               AND p.tier       = t.code
                         WHERE p.price_minor IS NULL
-                        ORDER BY hc.sort_order, t.sort_order
+                        ORDER BY cu.code, hc.sort_order, t.sort_order
                         """)
                 .query(String.class)
                 .list();
 
         assertTrue(missing.isEmpty(),
-                "these hall class and tier combinations have no price, so their "
-                        + "seats disappear from the seat map: " + missing);
+                "these combinations have no price, so their seats disappear "
+                        + "from the seat map: " + missing);
     }
 
     /**
@@ -168,13 +179,15 @@ class PriceFreezeTest {
     // ------------------------------------------------------------- helpers
 
     /**
-     * An available seat in a screening that has not started, plus the two
-     * things that decide its listed price. Joined out to seat and screen,
-     * because seat_availability carries the hall class but not the screen.
+     * An available seat in a screening that has not started, plus the three
+     * things that decide its listed price. Currency joined the list in V17:
+     * the price table is keyed on it, so hall class and tier alone no longer
+     * identify one row.
      */
     private Seat someBookableSeat() {
         return jdbc.sql("""
-                        SELECT sa.showtime_id, sa.seat_id, sa.tier, sa.hall_class
+                        SELECT sa.showtime_id, sa.seat_id, sa.tier, sa.hall_class,
+                               sa.currency
                         FROM seat_availability sa
                         JOIN showtime st ON st.id = sa.showtime_id
                         WHERE sa.status = 'AVAILABLE'
@@ -185,7 +198,8 @@ class PriceFreezeTest {
                         rs.getLong("showtime_id"),
                         rs.getLong("seat_id"),
                         rs.getString("hall_class"),
-                        rs.getString("tier")))
+                        rs.getString("tier"),
+                        rs.getString("currency")))
                 .single();
     }
 
@@ -206,19 +220,28 @@ class PriceFreezeTest {
      * an error in SQL, it is a no-op returning zero, so without this check a
      * wrong hall class or tier surfaces later as a confusing failure about
      * prices rather than here as the real cause.
+     *
+     * Scoped to one currency, because the same hall class and tier now exist
+     * in both. Without the currency this moves the Indian and the British
+     * price together, which would still pass the freeze assertion and would
+     * quietly leave the other ladder edited for every test class after it.
      */
-    private void bumpListedPrice(String hallClass, String tier, int byMinor) {
+    private void bumpListedPrice(String currency, String hallClass, String tier,
+                                 int byMinor) {
         int updated = jdbc.sql("""
                         UPDATE hall_class_tier_price
                            SET price_minor = price_minor + :byMinor
-                         WHERE hall_class = :hallClass AND tier = :tier
+                         WHERE currency = :currency
+                           AND hall_class = :hallClass
+                           AND tier = :tier
                         """)
                 .param("byMinor", byMinor)
+                .param("currency", currency)
                 .param("hallClass", hallClass)
                 .param("tier", tier)
                 .update();
 
         assertEquals(1, updated,
-                "no price row for hall class %s and tier %s".formatted(hallClass, tier));
+                "no price row for %s %s and tier %s".formatted(currency, hallClass, tier));
     }
 }
