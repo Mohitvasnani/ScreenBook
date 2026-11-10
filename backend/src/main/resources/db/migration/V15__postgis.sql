@@ -1,0 +1,13 @@
+-- PostGIS, alone in its own migration.
+--
+-- Alone because it is the one statement in this wave that can fail for a
+-- reason that has nothing to do with the schema: a Postgres that does not
+-- ship the extension, or a role that is not allowed to create it. Flyway
+-- stops at the first failure, so keeping this by itself means a refusal
+-- leaves nothing half applied and the fix is a hosting question rather than a
+-- migration one.
+--
+-- IF NOT EXISTS because a Neon branch or a local container can arrive with it
+-- already installed, and a migration that fails against a database that is
+-- already correct is a migration that cannot be re-run.
+CREATE EXTENSION IF NOT EXISTS postgis;
