@@ -245,7 +245,7 @@ export function SeatMap({
                     >
                       <span className={styles.aisleRule} />
                       <span className={styles.aisleLabel}>
-                        {(rowSeats[0]?.tierName ?? TIERS[tier].label).toUpperCase()}
+                      {(rowSeats[0]?.tierName ?? TIERS[tier].label).toUpperCase()}
                       </span>
                       <span className={styles.aisleRule} />
                     </div>
