@@ -3,7 +3,10 @@
 #   docker compose up -d
 services:
   postgres:
-    image: postgres:18-alpine
+    # postgis/postgis, not postgres, because V15 creates the postgis
+    # extension. Still Postgres 18, so the volume path below is unchanged:
+    # 18 moved it to /var/lib/postgresql and these images follow that.
+    image: postgis/postgis:18-3.6-alpine
     container_name: screenbook-postgres
     environment:
       POSTGRES_DB: screenbook

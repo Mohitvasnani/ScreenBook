@@ -17,3 +17,4 @@ Thumbs.db
 # Local curl scratch: cookie jars and request bodies with credentials in them
 backend/jar.txt
 backend/*.json
+cinemas.json
