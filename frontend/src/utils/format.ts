@@ -1,14 +1,17 @@
 /* Money is stored and sent as integer minor units. It becomes a decimal string
    here and nowhere else.
 
-   Fraction digits are 0 to 2 rather than a fixed 2. Every listed price is a
-   whole number of rupees and reads as one, while a 5% band on an odd price can
-   produce a genuine 50 paise line and that still shows correctly. */
+   Fraction digits are all or nothing. A whole number of rupees prints as 350,
+   and anything else prints both digits as 367.50. Never one digit: a 5% band
+   on a 350 listing is 17.50, so the half rupee is real and has to show, but
+   "367.5" is not a way anybody writes money. The amount decides, which is why
+   minimumFractionDigits is computed rather than fixed. */
    export function money(minor: number, currency: string): string {
+    const wholeUnits = minor % 100 === 0;
     return new Intl.NumberFormat("en-GB", {
       style: "currency",
       currency,
-      minimumFractionDigits: 0,
+      minimumFractionDigits: wholeUnits ? 0 : 2,
       maximumFractionDigits: 2,
     }).format(minor / 100);
   }
@@ -41,7 +44,8 @@
   
   export const seatLabel = (rowLabel: string, seatNumber: number): string =>
     `${rowLabel}${seatNumber}`;
+  
   /* "A2" or "A2, A3, F1". Used wherever a hold or booking names its seats. */
-export const seatNames = (
-  seats: { rowLabel: string; seatNumber: number }[],
-): string => seats.map((s) => seatLabel(s.rowLabel, s.seatNumber)).join(", ");
+  export const seatNames = (
+    seats: { rowLabel: string; seatNumber: number }[],
+  ): string => seats.map((s) => seatLabel(s.rowLabel, s.seatNumber)).join(", ");
