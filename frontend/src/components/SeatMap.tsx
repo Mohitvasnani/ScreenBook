@@ -8,23 +8,22 @@ import { TIERS } from "@/utils/seatTiers";
 
 import { Seat } from "./Seat";
 
-/* Seats laid out 3 | 6 | 3 with two walking aisles, so the best seats sit in a
-   six-wide centre block. The gaps are what make this read as a cinema rather
-   than a spreadsheet, and they are the landmark people navigate by.
+/* The room is drawn from the room, not from an assumption about it. The API
+   sends screen.aisle_after, the seat numbers after which this house has a
+   gangway, and the blocks between them are worked out here. The gaps are what
+   make this read as a cinema rather than a spreadsheet, and they are the
+   landmark people navigate by, so getting them from the data matters: V18
+   holds three room shapes and this used to draw all of them as 3 | 6 | 3.
 
-   Two cross-aisles separate the tiers. Where they fall is not decided here:
-   the API gives every seat its tier, so an aisle appears wherever consecutive
-   rows disagree. Reseating the house is a migration, not a frontend change.
+   Two cross-aisles separate the tiers, and those are a different thing again.
+   Where they fall is not decided here either: the API gives every seat its
+   tier, so a cross-aisle appears wherever consecutive rows disagree. Reseating
+   a house is a migration, not a frontend change.
 
-   Two views. Fit scales 120 seats to the container, which at 375px leaves each
-   one about 26px: fine for finding a seat, tight for tapping six of them.
+   Two views. Fit scales the house to the container, which at 375px leaves each
+   seat about 26px: fine for finding a seat, tight for tapping six of them.
    Zoom fixes the seat size and scrolls instead. Fit is the default because it
    answers "where is there space" and that is the first question. */
-const BLOCKS = [
-  [1, 2, 3],
-  [4, 5, 6, 7, 8, 9],
-  [10, 11, 12],
-];
 
 type View = "fit" | "zoom";
 
@@ -33,13 +32,45 @@ type View = "fit" | "zoom";
    lying about something. */
 type Viewport = { left: number; width: number };
 
+/**
+ * Seat numbers grouped into the blocks the aisles cut the row into.
+ *
+ * [3, 9] over a 12 wide row gives 1-3, 4-9, 10-12. [5] over 10 gives two
+ * halves. An empty list gives one unbroken block, which is a small screen with
+ * no gangway and is a room, not an error.
+ *
+ * Positions are deduplicated, sorted and clipped to inside the row before use.
+ * An aisle at or past the last seat is an aisle against the wall, and the way
+ * that fails is an empty trailing block rendering as a silent gap rather than
+ * as anything anyone would notice, so it is discarded here instead.
+ */
+function blocksFrom(aisleAfter: number[], width: number): number[][] {
+  if (width < 1) return [];
+
+  const cuts = [...new Set(aisleAfter)]
+    .filter((n) => Number.isInteger(n) && n >= 1 && n < width)
+    .sort((a, b) => a - b);
+
+  const blocks: number[][] = [];
+  let start = 1;
+  for (const end of [...cuts, width]) {
+    blocks.push(Array.from({ length: end - start + 1 }, (_, i) => start + i));
+    start = end + 1;
+  }
+  return blocks;
+}
+
 export function SeatMap({
   seats,
+  aisleAfter,
   selectedIds,
   pending,
   onSelect,
 }: {
   seats: SeatType[];
+  /* The room's own aisle positions. Passed in rather than read from a constant,
+     which is the whole point of this change. */
+  aisleAfter: number[];
   /* A set, not an id: several seats can be selected at once, and a Set keeps
      the per-seat lookup O(1) across 120 seats. */
   selectedIds: ReadonlySet<number>;
@@ -58,6 +89,13 @@ export function SeatMap({
   /* Sorted here rather than trusting the order the API happened to return in.
      The cross-aisles depend on the rows being in sequence. */
   const rowLabels = [...rows.keys()].sort();
+
+  /* The row width comes off the seats, which is why the API does not send it.
+     Every row of a house has the same number of seats, so the widest answers
+     for all of them, and a row with a missing seat still lands in the right
+     block because blocks are seat numbers rather than positions in an array. */
+  const width = seats.reduce((widest, seat) => Math.max(widest, seat.seatNumber), 0);
+  const blocks = blocksFrom(aisleAfter, width);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -197,6 +235,7 @@ export function SeatMap({
         <Minimap
           rowLabels={rowLabels}
           rows={rows}
+          blocks={blocks}
           selectedIds={selectedIds}
           viewport={viewport}
           onSeek={seek}
@@ -245,7 +284,7 @@ export function SeatMap({
                     >
                       <span className={styles.aisleRule} />
                       <span className={styles.aisleLabel}>
-                      {(rowSeats[0]?.tierName ?? TIERS[tier].label).toUpperCase()}
+                        {(rowSeats[0]?.tierName ?? TIERS[tier].label).toUpperCase()}
                       </span>
                       <span className={styles.aisleRule} />
                     </div>
@@ -255,7 +294,7 @@ export function SeatMap({
                     <span className={`${styles.rowLabel} tnum`}>{rowLabel}</span>
 
                     <div className={styles.blocks}>
-                      {BLOCKS.map((block, blockIndex) => (
+                      {blocks.map((block, blockIndex) => (
                         <div
                           key={blockIndex}
                           className={styles.block}
@@ -299,6 +338,10 @@ export function SeatMap({
  * The whole house at a glance, with a box around the part currently on screen.
  * Only in zoom, and only when there is actually something off screen.
  *
+ * Takes the same blocks the grid below uses rather than deriving its own, so
+ * the two cannot disagree about where the aisles are. That was already the
+ * point of the shared constant this replaced.
+ *
  * aria-hidden, deliberately. Every seat here is already a real button in the
  * grid below, announced with its row, number, tier, price and state, and the
  * grid is fully arrow-navigable. A second focusable copy of 120 seats would
@@ -315,12 +358,14 @@ export function SeatMap({
 function Minimap({
   rowLabels,
   rows,
+  blocks,
   selectedIds,
   viewport,
   onSeek,
 }: {
   rowLabels: string[];
   rows: Map<string, SeatType[]>;
+  blocks: number[][];
   selectedIds: ReadonlySet<number>;
   viewport: Viewport;
   onSeek: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -345,7 +390,7 @@ function Minimap({
           const rowSeats = rows.get(rowLabel) ?? [];
           return (
             <div key={rowLabel} className={styles.miniRow}>
-              {BLOCKS.map((block, blockIndex) => (
+              {blocks.map((block, blockIndex) => (
                 <div key={blockIndex} className={styles.miniBlock}>
                   {block.map((number) => {
                     const seat = rowSeats.find((s) => s.seatNumber === number);

@@ -195,8 +195,9 @@ export function SeatSelectionScreen() {
 
           {seats.data && (
             <>
-              <SeatMap
+                            <SeatMap
                 seats={seats.data.seats}
+                aisleAfter={seats.data.aisleAfter}
                 selectedIds={selectedIds}
                 pending={holding}
                 onSelect={toggle}

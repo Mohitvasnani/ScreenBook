@@ -85,9 +85,13 @@
   export interface SeatMap {
     showtimeId: number;
     seats: Seat[];
-    /* Only the rules currently moving prices, as percentages. Empty means every
-       seat is at its listed price. The money amounts are per tier, so they live
-       on each seat rather than here. */
+       
+    /* Seat numbers after which the room has a gangway, straight from
+       screen.aisle_after. The positions, not the blocks they imply: the client
+       derives those from these plus the row width it reads off the seats.
+       Empty is a room with no aisle at all, which is a real small screen and
+       not a missing value. */
+    aisleAfter: number[];
     priceRules: PriceRate[];
   }
   

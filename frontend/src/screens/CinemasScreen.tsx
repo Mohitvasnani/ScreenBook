@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-
+import dynamic from "next/dynamic";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
@@ -11,6 +11,17 @@ import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
 import type { Cinema, NearestCinema } from "@/types/api";
 import { distance } from "@/utils/format";
+
+
+/* Loaded only when this screen renders, for two reasons that happen to have
+   one fix. MapLibre is around three quarters of a megabyte, and importing it
+   normally would put it in the bundle for the seat map and the checkout too.
+   It also needs a real browser window, so it cannot be server-rendered at all.
+   ssr false is legal here because this file is a client component. */
+   const CinemaMap = dynamic(
+    () => import("@/components/CinemaMap").then((m) => m.CinemaMap),
+    { ssr: false, loading: () => <Skeleton height="320px" /> },
+  );
 
 /* The browser's geolocation callback API as a promise, so the handler below
    reads as one sequence instead of nesting the fetch inside a callback.
@@ -108,7 +119,7 @@ export function CinemasScreen() {
           </p>
         )}
       </div>
-
+      {data && data.length > 0 && <CinemaMap cinemas={data} />}
       {nearby && (
         <section className={styles.group}>
           <h2 className={styles.groupTitle}>Nearest to you</h2>

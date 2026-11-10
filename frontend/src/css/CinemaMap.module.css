@@ -1,0 +1,93 @@
+.wrap {
+    display: grid;
+    gap: 8px;
+    margin-block: 24px;
+  }
+  
+  .heading {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    color: var(--color-n500);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  
+  /* clamp rather than a fixed height: tall enough on a phone to show both
+     clusters, never so tall on a laptop that the city list is pushed off. */
+  .map {
+    height: clamp(260px, 42vh, 440px);
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--color-surface);
+  }
+  
+  .note {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--color-n500);
+  }
+  
+  /* MapLibre's popup chrome ships light by default, which is wrong under a dark
+     theme. :global is needed because those class names are the library's, not
+     this module's, and they only exist inside .wrap because the popup is
+     appended into the map container. */
+  .wrap :global(.maplibregl-popup-content) {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-divider);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    box-shadow: none;
+  }
+  
+  .wrap :global(.maplibregl-popup-anchor-top .maplibregl-popup-tip),
+  .wrap :global(.maplibregl-popup-anchor-top-left .maplibregl-popup-tip),
+  .wrap :global(.maplibregl-popup-anchor-top-right .maplibregl-popup-tip) {
+    border-bottom-color: var(--color-surface);
+  }
+  
+  .wrap :global(.maplibregl-popup-anchor-bottom .maplibregl-popup-tip),
+  .wrap :global(.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip),
+  .wrap :global(.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip) {
+    border-top-color: var(--color-surface);
+  }
+  
+  .wrap :global(.maplibregl-popup-anchor-left .maplibregl-popup-tip) {
+    border-right-color: var(--color-surface);
+  }
+  
+  .wrap :global(.maplibregl-popup-anchor-right .maplibregl-popup-tip) {
+    border-left-color: var(--color-surface);
+  }
+  
+  .popup {
+    display: grid;
+    gap: 2px;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    min-width: 160px;
+  }
+  
+  .popup strong {
+    font-family: var(--font-heading);
+    color: var(--color-ink);
+  }
+  
+  .popup span {
+    color: var(--color-n500);
+    font-size: 0.82rem;
+  }
+  
+  .popup a {
+    margin-top: 6px;
+    color: var(--color-accent);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  
+  .popup a:hover {
+    text-decoration: underline;
+  }

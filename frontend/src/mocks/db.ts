@@ -26,6 +26,12 @@
    const SEATS_PER_ROW = 12;
    const SEAT_ID_BASE = 1000;
    
+   /*    One room shape for every house in the mock, 10 rows of 12, even though V18
+   gives real screens three different layouts in screen.aisle_after. The column
+   is in the contract now and the mock reports its own true shape through
+   AISLE_AFTER, so this is no longer a divergence, only a smaller house. */
+   export const AISLE_AFTER = [3, 9];
+   
    /* ------------------------------------------------------------------ seats */
    
    /* Stands in for the seat_tier table in migration V6. The price uplift it used

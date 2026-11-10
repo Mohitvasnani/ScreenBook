@@ -22,6 +22,7 @@
   import { CINEMAS, cinemaById, nearest, toDetail, toSummary } from "./cinemas";
   import {
     createBooking,
+    AISLE_AFTER,
     createHold,
     findIdempotency,
     findShowtime,
@@ -289,10 +290,11 @@
        }
    
        const body: SeatMap = {
-         showtimeId,
-         seats: seatMapFor(showtimeId),
-         priceRules: priceRatesFor(showtimeId),
-       };
+        showtimeId,
+        seats: seatMapFor(showtimeId),
+        aisleAfter: AISLE_AFTER,
+        priceRules: priceRatesFor(showtimeId),
+      };
        return HttpResponse.json(body);
      }),
    
