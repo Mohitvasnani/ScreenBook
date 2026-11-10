@@ -19,6 +19,11 @@ import java.time.Instant;
  * No priceMinor since V12. A seat's price comes from hall_class_tier_price,
  * keyed on the screen's hall class and the seat's tier, so a price on the
  * screening as well would be a second place for the truth to live.
+ *
+ * No currency since V19, for the same reason one step further out. Currency is
+ * a fact about the cinema, so it lives there and is reached through the screen.
+ * A copy on the screening would be a second source of truth that can disagree
+ * with the first.
  */
 @Entity
 @Table(name = "showtime")
@@ -37,9 +42,6 @@ public class Showtime {
     @Column(name = "starts_at", nullable = false)
     private Instant startsAt;
 
-    @Column(nullable = false)
-    private String currency;
-
     protected Showtime() {
     }
 
@@ -47,5 +49,4 @@ public class Showtime {
     public Long getFilmId() { return filmId; }
     public Long getScreenId() { return screenId; }
     public Instant getStartsAt() { return startsAt; }
-    public String getCurrency() { return currency; }
 }

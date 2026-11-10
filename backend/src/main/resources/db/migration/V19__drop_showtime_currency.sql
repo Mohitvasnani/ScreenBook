@@ -1,0 +1,31 @@
+-- showtime.currency, removed.
+--
+-- It was correct when every screening was in one building. V17 moved currency
+-- onto the cinema, which is where it belongs: a building does not change
+-- currency, and a screening inheriting one from its screen's cinema cannot
+-- disagree with it. V18 then rebuilt seat_availability to read ci.currency and
+-- repointed the "from" price subquery in ShowtimeQuery at the same place.
+-- Nothing has read this column since.
+--
+-- A column that nothing reads is not harmless. It is NOT NULL with a default
+-- of 'INR', so the startup seeder would have to write a value into it for
+-- every screening it creates, including British ones, and get that value right
+-- for a column no code consults. The first time somebody omitted it, every UK
+-- screening would silently be stamped INR and nothing would look wrong. The
+-- cheapest way to never have that bug is to not have the column.
+--
+-- No CASCADE, deliberately. If some view still depended on this column,
+-- Postgres would refuse and this migration would fail. That refusal is the
+-- check that the claim above is true, so weakening it with CASCADE would throw
+-- away the only verification this migration has.
+--
+-- Showtime.currency goes in the same change. ddl-auto is validate, so leaving
+-- the field in place stops the application at startup with a schema mismatch.
+-- That is the same mechanism that caught the dropped price_minor when V12 ran,
+-- working as intended rather than getting in the way.
+--
+-- Existing bookings are untouched. booking.currency records what was actually
+-- charged and is a separate column on a separate table. Rewriting a receipt is
+-- falsifying history, which is the rule that put prices on the booking in the
+-- first place.
+ALTER TABLE showtime DROP COLUMN currency;
