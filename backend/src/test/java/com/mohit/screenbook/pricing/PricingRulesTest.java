@@ -32,6 +32,13 @@ class PricingRulesTest {
     private static final int BASE = 20_000;
     private static final int SEATS = 120;
 
+    /* The zone is the cinema's now, so it is an argument rather than config.
+       Most cases below use Jaipur, which is what the old configured zone was,
+       so their meaning is unchanged. Liverpool exists for the two cases that
+       could not be written at all while there was one global zone. */
+    private static final ZoneId KOLKATA = ZoneId.of("Asia/Kolkata");
+    private static final ZoneId LIVERPOOL = ZoneId.of("Europe/London");
+
     /** Wednesday 11 November 2026, 14:00 in Asia/Kolkata, which is 08:30 UTC. */
     private static final Instant WED_AFTERNOON = Instant.parse("2026-11-11T08:30:00Z");
 
@@ -47,7 +54,6 @@ class PricingRulesTest {
                         500, LocalTime.of(17, 0), LocalTime.of(22, 59)),
                 new PricingProperties.Weekend(
                         500, EnumSet.of(DayOfWeek.FRIDAY, DayOfWeek.SATURDAY)),
-                ZoneId.of("Asia/Kolkata"),
                 maxAdjustmentBp));
     }
 
@@ -84,7 +90,7 @@ class PricingRulesTest {
     @DisplayName("an empty midweek matinee three days out costs the listed price")
     void neutralCaseIsUnchanged() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, SEATS, WED_AFTERNOON, daysBefore(WED_AFTERNOON, 3));
+                BASE, 0, SEATS, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
 
         assertEquals(BASE, b.adjustedPriceMinor());
         assertEquals(0, bpOf(b, PricingRules.OCCUPANCY));
@@ -98,7 +104,7 @@ class PricingRulesTest {
     @DisplayName("every rule produces a line even when it does not fire")
     void zeroBandsStillProduceLines() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, SEATS, WED_AFTERNOON, daysBefore(WED_AFTERNOON, 3));
+                BASE, 0, SEATS, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
 
         /* Four lines, not zero. Storing the bands that did not fire is what
            keeps "this rule did not apply" distinguishable from "this rule did
@@ -110,7 +116,8 @@ class PricingRulesTest {
 
     private int occupancyBpFor(int seatsTaken) {
         return bpOf(rules().priceFor(BASE, seatsTaken, SEATS,
-                WED_AFTERNOON, daysBefore(WED_AFTERNOON, 3)), PricingRules.OCCUPANCY);
+                WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3)),
+                PricingRules.OCCUPANCY);
     }
 
     @Test
@@ -127,7 +134,7 @@ class PricingRulesTest {
     @DisplayName("a screen with no seats does not divide by zero")
     void emptyScreenIsNotAnError() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, 0, WED_AFTERNOON, daysBefore(WED_AFTERNOON, 3));
+                BASE, 0, 0, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
 
         assertEquals(0, bpOf(b, PricingRules.OCCUPANCY));
         assertAddsUp(b);
@@ -137,7 +144,8 @@ class PricingRulesTest {
 
     private int leadTimeBpFor(Duration until) {
         return bpOf(rules().priceFor(BASE, 0, SEATS,
-                WED_AFTERNOON, WED_AFTERNOON.minus(until)), PricingRules.LEAD_TIME);
+                WED_AFTERNOON, KOLKATA, WED_AFTERNOON.minus(until)),
+                PricingRules.LEAD_TIME);
     }
 
     @Test
@@ -157,7 +165,7 @@ class PricingRulesTest {
 
     private int timeOfDayBpFor(String startsAt) {
         Instant start = Instant.parse(startsAt);
-        return bpOf(rules().priceFor(BASE, 0, SEATS, start, daysBefore(start, 3)),
+        return bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, daysBefore(start, 3)),
                 PricingRules.TIME_OF_DAY);
     }
 
@@ -167,7 +175,7 @@ class PricingRulesTest {
      * LocalTime.ofInstant or a system default zone gives the opposite answer.
      */
     @Test
-    @DisplayName("evening window is read in the configured zone, not UTC")
+    @DisplayName("evening window is read in the cinema's zone, not UTC")
     void timeOfDayBands() {
         assertEquals(0,   timeOfDayBpFor("2026-11-11T11:29:00Z"), "16:59 local");
         assertEquals(500, timeOfDayBpFor("2026-11-11T11:30:00Z"), "17:00 local");
@@ -179,7 +187,7 @@ class PricingRulesTest {
 
     private int dayOfWeekBpFor(String startsAt) {
         Instant start = Instant.parse(startsAt);
-        return bpOf(rules().priceFor(BASE, 0, SEATS, start, daysBefore(start, 3)),
+        return bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, daysBefore(start, 3)),
                 PricingRules.DAY_OF_WEEK);
     }
 
@@ -189,7 +197,7 @@ class PricingRulesTest {
      * the opposite answer under UTC from under Asia/Kolkata.
      */
     @Test
-    @DisplayName("weekend is read in the configured zone, not UTC")
+    @DisplayName("weekend is read in the cinema's zone, not UTC")
     void dayOfWeekBands() {
         assertEquals(500, dayOfWeekBpFor("2026-11-12T19:00:00Z"),
                 "Thursday in UTC, Friday 00:30 in Kolkata");
@@ -197,6 +205,59 @@ class PricingRulesTest {
                 "Saturday 00:30 in Kolkata");
         assertEquals(0,   dayOfWeekBpFor("2026-11-14T19:00:00Z"),
                 "Saturday in UTC, Sunday 00:30 in Kolkata");
+    }
+
+    // ------------------------------------------------------------- the zone
+
+    /**
+     * The reason the zone is a parameter and not configuration.
+     *
+     * One instant, two cinemas. 14:00Z is 19:30 in Jaipur, inside the 17:00 to
+     * 22:59 evening band, and 14:00 in Liverpool, outside it. Under one global
+     * zone exactly one of these two was always wrong, and which one depended on
+     * a property file rather than on where the cinema is.
+     *
+     * Everything else here is in its zero band, so the only line that can move
+     * is the time-of-day one.
+     */
+    @Test
+    @DisplayName("one instant is an evening in Jaipur and an afternoon in Liverpool")
+    void theEveningBandFollowsTheCinema() {
+        Instant start = Instant.parse("2026-11-11T14:00:00Z");
+        Instant now = daysBefore(start, 3);
+
+        assertEquals(500,
+                bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, now),
+                        PricingRules.TIME_OF_DAY),
+                "19:30 in Jaipur is an evening show");
+        assertEquals(0,
+                bpOf(rules().priceFor(BASE, 0, SEATS, start, LIVERPOOL, now),
+                        PricingRules.TIME_OF_DAY),
+                "14:00 in Liverpool is not");
+    }
+
+    /**
+     * The same trap one rule down, so that a fix which only reached
+     * timeOfDayLine cannot pass.
+     *
+     * 23:00Z on Thursday is 04:30 on Friday in Jaipur, and Friday is a weekend
+     * day in this config. Both local times sit outside the evening window, so
+     * the only line that can move is the weekend one.
+     */
+    @Test
+    @DisplayName("the weekend band follows the cinema across the date boundary")
+    void theWeekendBandFollowsTheCinema() {
+        Instant start = Instant.parse("2026-11-12T23:00:00Z");
+        Instant now = daysBefore(start, 3);
+
+        assertEquals(500,
+                bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, now),
+                        PricingRules.DAY_OF_WEEK),
+                "already Friday 04:30 in Jaipur");
+        assertEquals(0,
+                bpOf(rules().priceFor(BASE, 0, SEATS, start, LIVERPOOL, now),
+                        PricingRules.DAY_OF_WEEK),
+                "still Thursday 23:00 in Liverpool");
     }
 
     // ----------------------------------------------------------- everything
@@ -212,7 +273,7 @@ class PricingRulesTest {
         // Friday 13 November 2026, 19:00 Asia/Kolkata
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules().priceFor(
-                BASE, SEATS, SEATS, start, start.minus(Duration.ofHours(3)));
+                BASE, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
 
         assertEquals(2000, bpOf(b, PricingRules.OCCUPANCY));
         assertEquals(1000, bpOf(b, PricingRules.LEAD_TIME));
@@ -229,7 +290,7 @@ class PricingRulesTest {
     void allFourRulesOnADearerSeat() {
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules().priceFor(
-                55_000, SEATS, SEATS, start, start.minus(Duration.ofHours(3)));
+                55_000, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
 
         assertEquals(77_000, b.adjustedPriceMinor());
         assertAddsUp(b);
@@ -251,7 +312,7 @@ class PricingRulesTest {
     void capIsALineNotATruncation() {
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules(3000).priceFor(
-                BASE, SEATS, SEATS, start, start.minus(Duration.ofHours(3)));
+                BASE, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
 
         assertEquals(5, b.rules().size(), "four rules plus the cap");
         assertEquals(-1000, bpOf(b, PricingRules.CAP),

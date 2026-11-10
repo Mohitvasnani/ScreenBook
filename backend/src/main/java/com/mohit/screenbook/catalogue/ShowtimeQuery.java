@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -56,6 +57,7 @@ public class ShowtimeQuery {
                    st.starts_at       AS starts_at,
                    f.runtime_minutes  AS runtime_minutes,
                    ci.currency        AS currency,
+                   ci.timezone        AS timezone,
 
                    (SELECT min(p.price_minor)
                       FROM hall_class_tier_price p
@@ -102,9 +104,12 @@ public class ShowtimeQuery {
     private static final String PRICING_INPUTS = """
             SELECT occ.seats_taken  AS seats_taken,
                    occ.seats_total  AS seats_total,
-                   st.starts_at     AS starts_at
+                   st.starts_at     AS starts_at,
+                   ci.timezone      AS timezone
             FROM showtime st
             JOIN showtime_occupancy occ ON occ.showtime_id = st.id
+            JOIN screen sc  ON sc.id = st.screen_id
+            JOIN cinema ci  ON ci.id = sc.cinema_id
             WHERE st.id = :showtimeId
             """;
 
@@ -171,7 +176,8 @@ public class ShowtimeQuery {
                 .query((rs, rowNum) -> new ShowtimePricingInputs(
                         rs.getInt("seats_taken"),
                         rs.getInt("seats_total"),
-                        rs.getObject("starts_at", OffsetDateTime.class).toInstant()))
+                        rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
+                        ZoneId.of(rs.getString("timezone"))))
                 .optional()
                 .orElseThrow(() -> new NotFoundException(
                         "No showtime with id %d.".formatted(showtimeId)));
@@ -184,6 +190,7 @@ public class ShowtimeQuery {
                 rs.getString("film_title"),
                 rs.getString("screen_name"),
                 rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
+                ZoneId.of(rs.getString("timezone")),
                 rs.getInt("runtime_minutes"),
                 rs.getInt("base_from_price_minor"),
                 rs.getString("currency"),

@@ -4,7 +4,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.DayOfWeek;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.Set;
 
 /**
@@ -20,13 +19,12 @@ public record PricingProperties(
         TimeOfDay timeOfDay,
         Weekend dayOfWeek,
 
-        /**
-         * Which zone decides whether a show is an evening or a weekend one.
-         * starts_at is an instant, so without an explicit zone this reads the
-         * server default and a container running UTC disagrees with a laptop.
-         * Same class of bug as the Locale.ROOT fix in Emails.
-         */
-        ZoneId zone,
+        /* No zone here. Which zone decides whether a show is an evening or a
+           weekend one is a fact about the cinema, not about the application,
+           so it arrives at priceFor as a parameter and comes from
+           cinema.timezone. It is deliberately not left here as a default: a
+           default would let a new call site reintroduce the bug silently,
+           whereas its absence makes the compiler name every call site. */
 
         /**
          * Ceiling on the total adjustment. A backstop, not part of the model:

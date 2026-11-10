@@ -33,6 +33,32 @@ public class SeatMapQuery {
             ORDER BY row_label, seat_number
             """;
 
+    /* The room's shape, which is a fact about the screen and not about any
+       seat in it. Its own read, deliberately, and not the two cheaper places
+       it could have gone.
+
+       Not a column on seat_availability: a two element array would repeat on
+       all 120 to 224 rows of every seat map to say one thing about the room.
+
+       Not a field on ShowtimePricingInputs, even though that query already
+       joins screen since the timezone change and this would therefore be free.
+       That record is named for what the pricing rules need, aisle layout is
+       not pricing, and a record whose name stops describing its contents is
+       how this starts drifting.
+
+       Both joins here are primary key lookups and this runs on a read-only
+       path with no locks held, so the extra round trip is the cheapest of the
+       options that keep the names honest. If a third screen-level fact ever
+       appears, that is the moment to widen ShowtimePricingInputs into a
+       general "facts about this screening" read and collapse the two. One
+       field does not justify a rename across three call sites. */
+    private static final String SCREEN_LAYOUT = """
+            SELECT sc.aisle_after AS aisle_after
+            FROM showtime st
+            JOIN screen sc ON sc.id = st.screen_id
+            WHERE st.id = :showtimeId
+            """;
+
     private static final String SHOWTIME_EXISTS =
             "SELECT exists(SELECT 1 FROM showtime WHERE id = :showtimeId)";
 
@@ -56,6 +82,30 @@ public class SeatMapQuery {
             throw new NotFoundException("No showtime with id %d.".formatted(showtimeId));
         }
         return seats;
+    }
+
+    /**
+     * The seat numbers after which this screening's room has a gangway, as
+     * V18 wrote them: {5} is one aisle down the middle of a ten wide room,
+     * {3,9} is the 3 | 6 | 3 room, {4,12} a sixteen wide hall.
+     *
+     * The raw positions, not the blocks they imply, for the reason on
+     * SCREEN_LAYOUT above.
+     *
+     * The 404 here is unreachable from SeatMapService, which calls rowsFor
+     * first and that already answers it. It stays because this method is
+     * public and the next caller has no such guarantee, and an empty Optional
+     * silently becoming an aisle-less room would be the worst available
+     * failure.
+     */
+    @Transactional(readOnly = true)
+    public List<Integer> layoutFor(long showtimeId) {
+        return jdbc.sql(SCREEN_LAYOUT)
+                .param("showtimeId", showtimeId)
+                .query((rs, rowNum) -> toAisles(rs.getArray("aisle_after")))
+                .optional()
+                .orElseThrow(() -> new NotFoundException(
+                        "No showtime with id %d.".formatted(showtimeId)));
     }
 
     /**
@@ -94,6 +144,20 @@ public class SeatMapQuery {
                 rs.getString("tier_name"),
                 rs.getInt("base_price_minor"),
                 rs.getString("currency"));
+    }
+
+    /* A Postgres int[] does not arrive as an int[]. getArray gives a
+       java.sql.Array whose own getArray is declared to return Object, and for
+       an integer column the driver boxes it to Integer[]. The cast cannot be
+       avoided, which is why this is a method and not a lambda body.
+
+       Nothing is guarded. aisle_after is NOT NULL and a null element inside it
+       is data that cannot legitimately exist, so both throw here rather than
+       quietly producing a room with no aisles, which would render as a wrong
+       seat map that nobody would question. */
+    private static List<Integer> toAisles(java.sql.Array array)
+            throws java.sql.SQLException {
+        return List.of((Integer[]) array.getArray());
     }
 
     private boolean showtimeExists(long showtimeId) {

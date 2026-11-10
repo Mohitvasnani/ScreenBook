@@ -175,7 +175,7 @@ public class HoldService {
         PriceBreakdown price = pricing.priceFor(
                 rows.getFirst().basePriceMinor(),
                 inputs.seatsTaken(), inputs.seatsTotal(),
-                inputs.startsAt(), now);
+                inputs.startsAt(), inputs.zone(), now);
 
         SeatHold hold = holds.save(
                 SeatHold.claim(showtimeId, ordered, price, now, ttl));

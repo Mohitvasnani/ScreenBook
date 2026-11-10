@@ -43,6 +43,11 @@ public class SeatMapService {
     @Transactional(readOnly = true)
     public SeatMapResponse forShowtime(long showtimeId) {
         List<SeatView> rows = seats.rowsFor(showtimeId);
+
+        /* After rowsFor, which has already answered "does this screening
+           exist". Three reads on this path now, all inside one read-only
+           transaction, so they see one snapshot of the room. */
+        List<Integer> aisleAfter = seats.layoutFor(showtimeId);
         ShowtimePricingInputs inputs = showtimes.pricingInputsFor(showtimeId);
         Instant now = clock.instant();
 
@@ -57,7 +62,7 @@ public class SeatMapService {
                         base -> base,
                         base -> pricing.priceFor(base,
                                 inputs.seatsTaken(), inputs.seatsTotal(),
-                                inputs.startsAt(), now)));
+                                inputs.startsAt(), inputs.zone(), now)));
 
         List<SeatMapSeat> priced = rows.stream()
                 .map(row -> new SeatMapSeat(
@@ -68,7 +73,7 @@ public class SeatMapService {
                         row.currency()))
                 .toList();
 
-        return new SeatMapResponse(showtimeId, priced, rates(byBase));
+        return new SeatMapResponse(showtimeId, priced, aisleAfter, rates(byBase));
     }
 
     /**

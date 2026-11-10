@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,14 +50,24 @@ public class PricingRules {
      */
     public PriceBreakdown priceFor(int basePriceMinor,
                                    int seatsTaken, int seatsTotal,
-                                   Instant startsAt, Instant now) {
+                                   Instant startsAt, ZoneId zone, Instant now) {
 
         /* Worked out once and passed down. Both time-based rules are questions
-           about the local clock, and startsAt is an instant, so the zone has to
-           come from config rather than the machine. A container running UTC
-           would otherwise disagree with a laptop about whether a show is an
-           evening one. */
-        ZonedDateTime local = startsAt.atZone(config.zone());
+           about a local clock, and startsAt is an instant, which has no local
+           time until a zone names one.
+
+           The zone is the cinema's, not the application's, and it arrives as a
+           parameter beside startsAt because the two are never useful apart. A
+           single configured zone priced a 19:10 Liverpool screening by
+           Kolkata's clock, where it is 00:40 and not an evening at all.
+
+           zone and startsAt travelling as two loose parameters is the one
+           compromise here. The honest shape is a small value type owned by
+           this package: pricing cannot take catalogue's
+           ShowtimePricingInputs without making a package cycle, because
+           catalogue already depends on pricing. That is a refactor rather
+           than part of this fix. */
+        ZonedDateTime local = startsAt.atZone(zone);
 
         List<PriceRule> lines = new ArrayList<>(List.of(
                 occupancyLine(basePriceMinor, seatsTaken, seatsTotal),

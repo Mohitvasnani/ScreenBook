@@ -1,6 +1,7 @@
 package com.mohit.screenbook.catalogue;
 
 import java.time.Instant;
+import java.time.ZoneId;
 
 /**
  * One row of the upcoming-showtimes query. Internal: ShowtimeSummary is the
@@ -20,6 +21,11 @@ public record ShowtimeRow(
         String filmTitle,
         String screenName,
         Instant startsAt,
+        /* The cinema's zone, for the pricing rules. Not carried onto
+           ShowtimeSummary: a listing is already scoped to one cinema, so the
+           client reads the zone once from the cinema rather than on every
+           row. */
+        ZoneId zone,
         int runtimeMinutes,
         int baseFromPriceMinor,
         String currency,

@@ -67,7 +67,7 @@ public class ShowtimeListService {
                 pricing.priceFor(
                         row.baseFromPriceMinor(),
                         row.seatsTaken(), row.seatsTotal(),
-                        row.startsAt(), now).adjustedPriceMinor(),
+                        row.startsAt(), row.zone(), now).adjustedPriceMinor(),
                 row.currency(),
                 row.seatsTotal() - row.seatsTaken(),
                 row.seatsTotal());
