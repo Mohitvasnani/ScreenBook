@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Synced from node_modules by scripts/sync-maplibre-worker.mjs on predev/prebuild
+/public/maplibre-gl-worker.js

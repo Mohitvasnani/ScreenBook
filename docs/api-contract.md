@@ -88,9 +88,12 @@ own seats are written, so nobody can inflate their own price. It is read from
 the same rows the seat map renders, so the number that sets the price cannot
 disagree with what a customer is looking at.
 
-**Local means `Asia/Kolkata`**, from configuration. `startsAt` is an instant
-and "Friday evening" is a local fact, so without an explicit zone a server
-running UTC would price a screening differently from a laptop.
+**Local means the cinema's own zone**, read from `cinema.timezone` and carried
+with the screening rather than configured. `startsAt` is an instant and
+"Friday evening" is a local fact, so a screening has no evening until a zone
+names one. There is no application-wide zone: a 19:00 Liverpool show and a
+19:00 Jaipur show are both evening shows, and one configured value could only
+ever be right about one of them.
 
 **The total is capped at +4000 basis points.** The four rules sum to exactly
 that, so the cap cannot fire as configured. It exists so a mistyped band cannot
@@ -358,6 +361,7 @@ The seat map for one showtime.
       "tier": "EXECUTIVE", "tierName": "Executive",
       "basePriceMinor": 50000, "priceMinor": 70000, "currency": "INR" }
   ],
+  "aisleAfter": [3, 9],
   "priceRules": [
     { "code": "OCCUPANCY",   "label": "Nearly full",  "basisPoints": 2000 },
     { "code": "LEAD_TIME",   "label": "Under 6 hours to showtime", "basisPoints": 1000 },
@@ -370,12 +374,31 @@ The seat map for one showtime.
 **404** unknown showtime.
 
 No row or column counts are sent. The client groups on `rowLabel` to build the
-grid, so the layout is described in one place rather than two.
+grid and reads the row width off the highest `seatNumber`, so the size of the
+house is described in one place rather than two.
+
+`aisleAfter` is the one layout fact that cannot be derived from the seats: the
+seat numbers after which this room has a walking aisle, straight from
+`screen.aisle_after`. `[3, 9]` over a twelve wide row is the 3 | 6 | 3 house,
+`[5]` over ten is one gangway down the middle, and `[4, 12]` over sixteen is a
+large hall. An empty list is a room with no aisle, which is a real small screen
+and not a missing value.
+
+The positions are sent, not the blocks they imply. Blocks are a rendering, and
+the client derives them from these plus the row width. Deriving them here would
+put a layout decision in the API and triple the payload to say the same thing.
+
+`aisleAfter` is about gangways across a row. The cross-aisles between price
+tiers are a different thing and are not sent at all: every seat carries its
+`tier`, so one appears wherever two consecutive rows disagree.
 
 `tier` is one of `NORMAL`, `PREMIUM`, `EXECUTIVE`, ordered front of house to
-back. The rows are fixed by the seeded layout: A to E Normal, F to H Premium,
-I to J Executive. `tierName` is the display label, sent so the client does not
-hold its own mapping from code to human text.
+back. The bands are proportional to the room rather than fixed letters: the
+front half of the house is Normal, the next 30% Premium, the back 20%
+Executive. On a ten row screen that is A to E, F to H, I to J, which is exactly
+what `V6` hardcoded, so nothing changed there, and a fourteen row room gets the
+same shape rather than running out of tiers. `tierName` is the display label,
+sent so the client does not hold its own mapping from code to human text.
 
 `basePriceMinor` is the seat's listed price for its hall class and tier.
 `priceMinor` is what it costs right now, after the rules. They are equal when

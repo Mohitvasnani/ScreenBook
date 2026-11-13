@@ -22,7 +22,11 @@ export function MockProvider({ children }: { children: ReactNode }) {
          compiles client components twice, once for the browser and once for
          server rendering, and the server pass still has to resolve this import
          even though it never runs it. import.meta.env.SSR is substituted at
-         build time, so the branch is removed from the server bundle entirely. */
+         build time, so the branch is removed from the server bundle entirely.
+
+         Turbopack-specific, and load-bearing: webpack does not define
+         import.meta.env, so building with --webpack fails to resolve
+         msw/browser and would also throw on .SSR of undefined at runtime. */
       if (import.meta.env.SSR) return;
 
       const { startWorker } = await import("@/mocks/browser");

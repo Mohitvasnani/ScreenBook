@@ -165,14 +165,19 @@ cannot produce a four-figure ticket.
 `PricingRules` is a pure function of its arguments. `now` arrives as a
 parameter rather than a `Clock` field, and there is no repository and no
 transaction, which is why its tests are the only ones in the project that do
-not need Docker. Evening and weekend are questions about local time, so the
-zone is configuration and never the server's default.
+not need Docker.
 
-That zone is still one global value, which is now wrong in a way worth naming.
-`cinema.timezone` exists and the seeder reads it, so a 19:00 Liverpool
-screening is scheduled as a Liverpool evening and priced as an Indian
-small-hours one. Passing the cinema's zone into `priceFor`, the way `now` is
-already passed, is the next change.
+The zone arrives the same way. Evening and weekend are questions about local
+time, an instant has no local time until a zone names one, and the zone that
+matters belongs to the building: it is read from `cinema.timezone` and travels
+with the screening into `priceFor`.
+
+There is deliberately no configured fallback. One global zone priced a 19:00
+Liverpool screening as an Indian small-hours one, and leaving a default behind
+would let the next call site reintroduce that silently. Its absence makes the
+compiler name every call site instead. Two tests pin the behaviour: one instant
+that is an evening in Jaipur and an afternoon in Liverpool, and one that is
+already Friday in Jaipur while it is still Thursday in Liverpool.
 
 ### A quote is frozen, a listing is not
 
@@ -397,8 +402,6 @@ either half alone.
   markers at country zoom is one blob over Delhi, a city picker, and a nearby
   list with distance badges on both the granted and the denied geolocation
   path.
-- **The cinema's timezone in the pricing rules**, so the seeder and the pricer
-  stop disagreeing about when the evening is.
 - **The seat map reading `screen.aisle_after`** instead of the frontend's
   hardcoded block widths. The column is populated with three room shapes and
   the client still draws every house as 3 | 6 | 3.

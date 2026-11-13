@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-   "dev": "next dev --webpack",
-"build": "next build --webpack",
+   "predev": "node scripts/sync-maplibre-worker.mjs",
+    "dev": "next dev",
+"prebuild": "node scripts/sync-maplibre-worker.mjs",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },

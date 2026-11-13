@@ -10,6 +10,7 @@ import {
   MapLibreMap,
   NavigationControl,
   Popup,
+  setWorkerUrl,
 } from "maplibre-gl";
 import type { FeatureCollection, Point } from "geojson";
 import { useRouter } from "next/navigation";
@@ -19,6 +20,16 @@ import styles from "@/css/CinemaMap.module.css";
 import type { Cinema } from "@/types/api";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+
+/* MapLibre derives its worker URL from import.meta.url and returns an empty
+   string unless that is an http(s) URL. No bundler gives it one: webpack
+   substitutes a file:// path, Turbopack a bare module path. An empty URL
+   resolves to the current page, so the browser tries to load the HTML
+   document as a module worker, fails the MIME check, and the map ends up
+   with no worker and no tiles. Naming the URL is the supported way out.
+   scripts/sync-maplibre-worker.mjs keeps the served copy in step with the
+   installed version. */
+setWorkerUrl("/maplibre-gl-worker.js");
 
 /* Public by necessity. The browser is what talks to MapTiler, so this is
    compiled into the page and anyone can read it out of the source. The
