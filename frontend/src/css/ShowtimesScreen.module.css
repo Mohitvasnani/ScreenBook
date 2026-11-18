@@ -30,6 +30,26 @@
     font-style: italic;
     color: var(--color-n700);
   }
+
+    /* Poster and text side by side, the poster a fixed column so every heading
+     down the page starts at the same x. w185 into a 92px slot is deliberate:
+     two device pixels per CSS pixel, which is what a retina screen wants. */
+  .filmHeader {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  
+  .filmPoster {
+    flex: 0 0 92px;
+  }
+  
+  /* A 92px poster beside a 30px heading leaves no room for a long title. */
+  @media (max-width: 420px) {
+    .filmPoster {
+      flex-basis: 64px;
+    }
+  }
   
   .times {
     margin-top: 16px;

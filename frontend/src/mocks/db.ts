@@ -110,9 +110,9 @@
    /* Films are invented. Real titles drag in studio-owned posters and nothing here
       needs them to be real. */
    const FILMS = [
-     { title: "The Long Quiet", runtime: 128 },
-     { title: "Saltwater", runtime: 112 },
-     { title: "Paper Moons", runtime: 99 },
+     { title: "Hope", runtime: 157, posterPath: "/6VY1ZKgpsc8CfGsQcCGiYEgHdH0.jpg" },
+     { title: "Godzilla Minus Zero", runtime: 135, posterPath: "/hSmIJluOJmTWvJs4d7kHRxjc8s8.jpg" },
+     { title: "Ebenezer", runtime: 115, posterPath: "/6H2N59jJW1hZEzn2ZdrMvJw5vNI.jpg" },
    ];
    
    /* Chosen so every rule is reachable: the daytime weekday screenings fire
@@ -159,7 +159,8 @@
               the seeded occupancy below depends on. */
            id: cinema.id * 100 + index + 1,
            cinemaId: cinema.id,
-           filmTitle: FILMS[slot.film].title,
+                      filmTitle: FILMS[slot.film].title,
+           posterPath: FILMS[slot.film].posterPath,
            screenName: `Screen ${slot.screen}`,
            startsAt: startsAt.toISOString(),
            runtimeMinutes: FILMS[slot.film].runtime,

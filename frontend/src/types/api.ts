@@ -11,6 +11,7 @@
        can still name the building and format the time in its zone. */
     cinemaId: number;
     filmTitle: string;
+    posterPath: string | null;
     screenName: string;
     startsAt: string;
     runtimeMinutes: number;

@@ -16,6 +16,7 @@ import { ApiError } from "@/services/problemDetails";
 import type { Seat, UnavailableSeat } from "@/types/api";
 import { extendsRun, isRunEnd } from "@/utils/adjacency";
 import { dayAndTime, money, seatNames } from "@/utils/format";
+import { Poster } from "@/components/Poster";
 
 /* Reading order, so the summary lists A2 before A3 however they were tapped. */
 const byPosition = (a: Seat, b: Seat) =>
@@ -168,13 +169,30 @@ export function SeatSelectionScreen() {
         ← {showtime ? "Back to this cinema" : "All cinemas"}
       </Link>
 
-      <h1 className={styles.title}>{showtime?.filmTitle ?? "\u00a0"}</h1>
-      {showtime && (
-        <p className={styles.meta}>
-          {dayAndTime(showtime.startsAt)} · {showtime.screenName} · from{" "}
-          {money(showtime.priceMinor, showtime.currency)}
-        </p>
-      )}
+            <div className={styles.header}>
+        {/* Rendered unconditionally, unlike the meta line below it. Poster
+            renders a placeholder for a null path, so the column holds its
+            width while the screening is still loading and the title does not
+            jump sideways when it arrives. Same job as the non-breaking space
+            in the h1. */}
+        <div className={styles.poster}>
+          <Poster
+            posterPath={showtime?.posterPath ?? null}
+            title={showtime?.filmTitle ?? ""}
+            size="w342"
+          />
+        </div>
+
+        <div>
+          <h1 className={styles.title}>{showtime?.filmTitle ?? "\u00a0"}</h1>
+          {showtime && (
+            <p className={styles.meta}>
+              {dayAndTime(showtime.startsAt)} · {showtime.screenName} · from{" "}
+              {money(showtime.priceMinor, showtime.currency)}
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* The "from" figure above is already the adjusted one, so without this
           a customer sees a price with no reason attached. */}

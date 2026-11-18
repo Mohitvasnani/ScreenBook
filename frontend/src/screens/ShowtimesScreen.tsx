@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-
+import { Poster } from "@/components/Poster";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
@@ -87,9 +87,19 @@ export function ShowtimesScreen() {
 
       {zone &&
         [...byFilm.entries()].map(([film, forFilm]) => (
-          <section key={film} className={styles.film}>
-            <h2 className={styles.filmTitle}>{film}</h2>
-            <p className={styles.filmMeta}>{runtime(forFilm[0].runtimeMinutes)}</p>
+                   <section key={film} className={styles.film}>
+            <div className={styles.filmHeader}>
+              {/* Off the first screening of the group. Every screening of one
+                  film carries the same poster path, so which one is arbitrary. */}
+              <div className={styles.filmPoster}>
+                <Poster posterPath={forFilm[0].posterPath} title={film} size="w185" />
+              </div>
+
+              <div>
+                <h2 className={styles.filmTitle}>{film}</h2>
+                <p className={styles.filmMeta}>{runtime(forFilm[0].runtimeMinutes)}</p>
+              </div>
+            </div>
 
             <ul className={styles.times}>
               {forFilm.map((showtime) => (

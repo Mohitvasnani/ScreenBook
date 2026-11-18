@@ -1,0 +1,20 @@
+/* 2:3 is TMDB's poster ratio. Set here rather than left to the image so the
+   space is reserved before the file arrives and the row does not jump, and so
+   the placeholder is the same shape as a real poster. */
+.poster,
+.placeholder {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  border-radius: 6px;
+  display: block;
+}
+
+.poster {
+  object-fit: cover;
+  background-color: var(--surface-2);
+}
+
+.placeholder {
+  background-color: var(--surface-2);
+  border: 1px solid var(--border);
+}

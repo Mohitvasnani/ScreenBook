@@ -6,6 +6,7 @@ import styles from "@/css/SiteFooter.module.css";
 const REPO_URL = "https://github.com/Mohitvasnani/ScreenBook";
 const API_DOCS_URL = "https://cinebook-67pa.onrender.com/swagger-ui/index.html";
 const OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright";
+const TMDB_URL = "https://www.themoviedb.org/";
 
 export function SiteFooter() {
   return (
@@ -58,12 +59,26 @@ export function SiteFooter() {
 
             Reusing strapline rather than inventing a class: same role, same
             weight. Give it one of its own if it ever needs to look different. */}
-        <span className={styles.strapline}>
+                <span className={styles.strapline}>
           Cinema locations from{" "}
           <a href={OSM_COPYRIGHT_URL} className={styles.link}>
             OpenStreetMap contributors
           </a>
           , licensed ODbL. Screenings, seats and prices are generated.
+        </span>
+
+        {/* TMDB asks for this wording, including the disclaimer, wherever their
+            data is shown. Film titles, runtimes, release dates and posters all
+            come from them, so it belongs beside the OSM credit rather than only
+            on a page with a poster on it. Posters are hotlinked from their CDN
+            and never re-hosted. */}
+        <span className={styles.strapline}>
+          Film data from{" "}
+          <a href={TMDB_URL} className={styles.link}>
+            TMDB
+          </a>
+          . This product uses the TMDB API but is not endorsed or certified by
+          TMDB.
         </span>
       </div>
     </footer>

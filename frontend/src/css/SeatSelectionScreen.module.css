@@ -8,8 +8,28 @@
   font-size: 14px;
 }
 
-.title {
+/* The 12px that used to be on .title moved up to .header, so the poster and
+   the heading share one top edge instead of the heading sitting 12px lower
+   than the image beside it. */
+.header {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
   margin-top: 12px;
+}
+
+.poster {
+  flex: 0 0 132px;
+}
+
+@media (max-width: 480px) {
+  .poster {
+    flex-basis: 96px;
+  }
+}
+
+.title {
+  margin-top: 0;
   font-size: 38px;
 }
 
