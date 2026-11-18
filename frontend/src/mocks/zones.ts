@@ -86,4 +86,19 @@
   ): { hour: number; day: number } {
     const shifted = new Date(instant.getTime() + offsetMs(timeZone, instant));
     return { hour: shifted.getUTCHours(), day: shifted.getUTCDay() };
+
+  }
+    /**
+   * The calendar date an instant falls on, at a cinema, as YYYY-MM-DD.
+   *
+   * Same shape as the dates the API sends, so the release comparison in
+   * pricing.ts is a string comparison and no second Date gets parsed. ISO
+   * dates sort lexicographically, which is why "before release" can be `<`.
+   *
+   * Shift, then read the UTC getters, exactly as localHourAndDay does, so the
+   * browser's own zone never enters the arithmetic.
+   */
+  export function localDateIso(instant: Date, timeZone: string): string {
+    const shifted = new Date(instant.getTime() + offsetMs(timeZone, instant));
+    return shifted.toISOString().slice(0, 10);
   }

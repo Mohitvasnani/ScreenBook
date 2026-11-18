@@ -109,12 +109,36 @@
    
    /* Films are invented. Real titles drag in studio-owned posters and nothing here
       needs them to be real. */
-   const FILMS = [
-     { title: "Hope", runtime: 157, posterPath: "/6VY1ZKgpsc8CfGsQcCGiYEgHdH0.jpg" },
-     { title: "Godzilla Minus Zero", runtime: 135, posterPath: "/hSmIJluOJmTWvJs4d7kHRxjc8s8.jpg" },
-     { title: "Ebenezer", runtime: 115, posterPath: "/6H2N59jJW1hZEzn2ZdrMvJw5vNI.jpg" },
-   ];
-   
+   const isoDateDaysAgo = (days: number): string => {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+};
+
+const FILMS = [
+  {
+    title: "Hope",
+    runtime: 157,
+    posterPath: "/6VY1ZKgpsc8CfGsQcCGiYEgHdH0.jpg",
+    releasedOn: isoDateDaysAgo(0),   // opening week
+  },
+  {
+    title: "Godzilla Minus Zero",
+    runtime: 135,
+    posterPath: "/hSmIJluOJmTWvJs4d7kHRxjc8s8.jpg",
+    releasedOn: isoDateDaysAgo(14),  // recent
+  },
+  {
+    title: "Ebenezer",
+    runtime: 115,
+    posterPath: "/6H2N59jJW1hZEzn2ZdrMvJw5vNI.jpg",
+    releasedOn: isoDateDaysAgo(90),  // older release
+  },
+];
+
+const RELEASED_ON_BY_TITLE = new Map(
+  FILMS.map((film) => [film.title, film.releasedOn] as const),
+);
    /* Chosen so every rule is reachable: the daytime weekday screenings fire
       nothing, the evening ones fire the evening band, and Friday and Saturday add
       the weekend band on top. No price per slot: a seat's price comes from its
@@ -298,7 +322,8 @@
        /* The cinema's zone, not one global value. A 19:10 screening is an evening
           show in Liverpool and in Jaipur, and with a single hardcoded zone only
           one of those two would be true. */
-       zoneOf(showtime),
+          zoneOf(showtime),
+       RELEASED_ON_BY_TITLE.get(showtime.filmTitle) ?? null,
      );
    }
    

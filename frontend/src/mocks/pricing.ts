@@ -11,7 +11,7 @@
 
    import type { PriceLine, PriceRate, Pricing, Tier } from "@/types/api";
 
-   import { localHourAndDay } from "./zones";
+   import { localDateIso ,localHourAndDay } from "./zones";
    
    export type HallClass = "STANDARD" | "LUXURY";
    
@@ -62,8 +62,21 @@
      leadTime: { imminentHours: 6, imminentBp: 1000, soonHours: 48, soonBp: 500 },
      evening: { fromHour: 17, toHour: 22, bp: 500 },
      /* 5 is Friday, 6 is Saturday, matching Date.getUTCDay. */
+          /* 5 is Friday, 6 is Saturday, matching Date.getUTCDay. */
      weekend: { days: [5, 6], bp: 500 },
-     maxAdjustmentBp: 4000,
+     /* Mirrors screenbook.pricing.weeks-since-release. previewBp is for a
+        screening dated before the film is out, which is a premiere and not a
+        clamped negative. The two week counts are exclusive upper bounds. */
+     weeksSinceRelease: {
+       previewBp: 1500,
+       openingBp: 1000,
+       recentBp: 500,
+       openingWeeks: 1,
+       recentWeeks: 4,
+     },
+     /* 2000 + 1000 + 500 + 500 + 1500. Raised from 4000 when the fifth rule
+        landed, so the cap stays a backstop instead of firing in normal use. */
+     maxAdjustmentBp: 5500,
    };
    
    /* Half away from zero, in integers. 10000 basis points is 100%. */
@@ -131,6 +144,56 @@
        ? line("DAY_OF_WEEK", "Weekend", BANDS.weekend.bp, baseMinor)
        : line("DAY_OF_WEEK", "Weekday", 0, baseMinor);
    }
+
+      /* How old the film is on the day it is shown, mirroring the server's
+      weeksSinceReleaseLine. Both operands are YYYY-MM-DD, so "before release"
+      is a string comparison.
+   
+      The preview guard compares dates and not the week count, for the same
+      reason as on the server: Math.trunc rounds toward zero, so a film out
+      tomorrow is 0 weeks old rather than -1 and a "weeks < 0" test would never
+      fire. Date.parse on a date-only string is UTC midnight, so the subtraction
+      is exact multiples of a day and no zone enters it twice. */
+   function weeksSinceReleaseLine(
+     baseMinor: number,
+     releasedOn: string | null,
+     startsAt: Date,
+     timeZone: string,
+   ): PriceLine {
+     const band = BANDS.weeksSinceRelease;
+   
+     if (!releasedOn) {
+       return line("WEEKS_SINCE_RELEASE", "Release date unknown", 0, baseMinor);
+     }
+   
+     const screeningDate = localDateIso(startsAt, timeZone);
+     if (screeningDate < releasedOn) {
+       return line("WEEKS_SINCE_RELEASE", "Preview", band.previewBp, baseMinor);
+     }
+   
+     const days = Math.round(
+       (Date.parse(screeningDate) - Date.parse(releasedOn)) / 86_400_000,
+     );
+     const weeks = Math.trunc(days / 7);
+   
+     if (weeks < band.openingWeeks) {
+       return line(
+         "WEEKS_SINCE_RELEASE",
+         `Under ${band.openingWeeks} weeks since release`,
+         band.openingBp,
+         baseMinor,
+       );
+     }
+     if (weeks < band.recentWeeks) {
+       return line(
+         "WEEKS_SINCE_RELEASE",
+         `Under ${band.recentWeeks} weeks since release`,
+         band.recentBp,
+         baseMinor,
+       );
+     }
+     return line("WEEKS_SINCE_RELEASE", "Long run", 0, baseMinor);
+   }
    
    /**
     * Every rule returns a line, including the zero bands, exactly as the server
@@ -142,13 +205,19 @@
      seatsTotal: number,
      startsAt: Date,
      now: Date,
-     timeZone: string,
+         timeZone: string,
+     /* YYYY-MM-DD, or null when the film has no known release date. Resolved by
+        the caller from the mock's own film table, because the API does not send
+        it: released_on is a pricing input, and the client is shown the price it
+        produced rather than the input. */
+     releasedOn: string | null,
    ): Pricing {
      const rules: PriceLine[] = [
        occupancyLine(baseMinor, seatsTaken, seatsTotal),
        leadTimeLine(baseMinor, startsAt, now),
        timeOfDayLine(baseMinor, startsAt, timeZone),
        dayOfWeekLine(baseMinor, startsAt, timeZone),
+       weeksSinceReleaseLine(baseMinor, releasedOn, startsAt, timeZone),
      ];
    
      const totalBp = rules.reduce((sum, rule) => sum + rule.basisPoints, 0);

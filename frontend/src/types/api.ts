@@ -112,11 +112,12 @@
     priceMinor: number;
   }
   
-  export type PriceRuleCode =
+ export type PriceRuleCode =
   | "OCCUPANCY"
   | "LEAD_TIME"
   | "TIME_OF_DAY"
   | "DAY_OF_WEEK"
+  | "WEEKS_SINCE_RELEASE"
   | "CAP";
 
 export interface PriceLine {
