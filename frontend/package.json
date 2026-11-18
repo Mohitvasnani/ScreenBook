@@ -2,11 +2,9 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-   
-    "dev": "next dev",
-
-    "build": "next build",
+   "scripts": {
+    "dev": "node scripts/sync-maplibre-worker.mjs && next dev",
+    "build": "node scripts/sync-maplibre-worker.mjs && next build",
     "start": "next start",
     "lint": "eslint"
   },
