@@ -57,7 +57,7 @@ never produce a fraction of a rupee.
 
 ### The rules
 
-Four of them, each a percentage of the seat's listed price, expressed in basis
+Five of them, each a percentage of the seat's listed price, expressed in basis
 points. 10000 basis points is 100%.
 
 | Rule | Band | Adjustment |
@@ -72,9 +72,13 @@ points. 10000 basis points is 100%.
 | | otherwise | 0 |
 | `DAY_OF_WEEK` | Friday or Saturday local | +500 |
 | | otherwise | 0 |
+| `WEEKS_SINCE_RELEASE` | the screening is dated before the film's release | +1500 |
+| | under 1 week since release | +1000 |
+| | under 4 weeks | +500 |
+| | 4 weeks or more, or no known release date | 0 |
 
-**They add up, they do not multiply.** +2000, +1000, +500 and +500 means +4000
-basis points of the listed price, not a product of four factors. Each line of a
+**They add up, they do not multiply.** +2000, +1000, +500, +500 and +1500 means
++5500 basis points of the listed price, not a product of five factors. Each line of a
 breakdown is then independently true; multiplied, the figure beside a rule
 would depend on which rules fired before it, so a breakdown would only be
 readable in one particular order.
@@ -95,7 +99,7 @@ names one. There is no application-wide zone: a 19:00 Liverpool show and a
 19:00 Jaipur show are both evening shows, and one configured value could only
 ever be right about one of them.
 
-**The total is capped at +4000 basis points.** The four rules sum to exactly
+**The total is capped at +5500 basis points.** The five rules sum to exactly
 that, so the cap cannot fire as configured. It exists so a mistyped band cannot
 produce a four-figure ticket, and because a legal ceiling has to be
 expressible: several Indian states cap cinema ticket prices by statute. If it
@@ -264,10 +268,11 @@ What is on at one cinema.
   {
     "id": 1,
     "cinemaId": 7,
-    "filmTitle": "The Long Quiet",
+    "filmTitle": "Hope",
+    "posterPath": "/6VY1ZKgpsc8CfGsQcCGiYEgHdH0.jpg",
     "screenName": "Screen 1",
     "startsAt": "2026-11-02T19:30:00Z",
-    "runtimeMinutes": 128,
+    "runtimeMinutes": 157,
     "basePriceMinor": 20000,
     "priceMinor": 28000,
     "currency": "INR",
@@ -727,7 +732,7 @@ client-supplied claim about who it is.
 {
   "bookingReference": "SB-7F3K2Q",
   "showtimeId": 1,
-  "filmTitle": "The Long Quiet",
+  "filmTitle": "Hope",
   "screenName": "Screen 1",
   "startsAt": "2026-11-02T19:30:00Z",
   "seats": [

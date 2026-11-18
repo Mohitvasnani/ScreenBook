@@ -147,7 +147,7 @@ hall and nearly flat in an expensive one, and percentage uplifts produce
 prices like 437.50. Every figure above is one a human picked and would be
 willing to print, which is what real cinemas publish.
 
-Four rules move it, each contributing a percentage of the listed price:
+Five rules move it, each contributing a percentage of the listed price:
 
 | Rule | Bands |
 |---|---|
@@ -155,11 +155,12 @@ Four rules move it, each contributing a percentage of the listed price:
 | Lead time | +5% inside 48 hours, +10% inside 6 |
 | Time of day | +5% for an evening screening |
 | Day of week | +5% on Friday and Saturday |
+| Weeks since release | +15% before release, +10% in the opening week, +5% under four weeks |
 
 They are summed rather than multiplied, so every line of the breakdown is
 independently true. Multiplied, the figure printed beside a rule would depend
-on which rules happened to fire before it. A cap sits underneath at +40%,
-which these four cannot reach between them; it exists so that a mistyped band
+on which rules happened to fire before it. A cap sits underneath at +55%,
+which these five cannot reach between them; it exists so that a mistyped band
 cannot produce a four-figure ticket.
 
 `PricingRules` is a pure function of its arguments. `now` arrives as a
@@ -218,6 +219,18 @@ problem whether it was scraped or generated.
 Cinema data © OpenStreetMap contributors, available under the
 [Open Database License](https://www.openstreetmap.org/copyright).
 
+The films are real too. Sixty-seven of them, now playing in the UK and India,
+from TMDB: titles, runtimes, release dates and poster paths are theirs, and the
+screenings those films are shown at are generated. Ingestion runs once offline
+in `tools/tmdb_ingest.py` and its output is committed as a migration, so the
+running service never calls TMDB and keeps exactly one runtime third party,
+which is Brevo. Posters are hotlinked from TMDB's CDN and never re-hosted,
+which is also why the API sends a poster path rather than a URL: the size
+belongs to whatever is rendering it, and baking one in would make changing a
+thumbnail an API change.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
 ### Screenings are seeded at startup, not by a migration
 
 A migration runs once. Flyway records it as applied and never revisits it, so
@@ -238,8 +251,11 @@ trips.
 `AT TIME ZONE` reads `cinema.timezone`, a column, not a constant. A Jaipur
 screening is scheduled on Jaipur's clock and a Liverpool one on Liverpool's,
 which is why the zone lives on the cinema: a platform operating in two
-countries does not have one evening. Films are assigned off a ring computed
-with `row_number()`, so three films today and forty later run the same
+countries does not have one evening. The film is assigned off a ring computed
+with `row_number()`, positioned by screen and day rather than by slot, so one
+screen runs one film across all four of its daily showings and a four-screen
+cinema advertises four films a day with four times each. The ring takes
+whatever films exist, so three of them and sixty-seven of them run the same
 statement.
 
 Expired screenings are deleted as housekeeping, and only ones with no booking
@@ -397,18 +413,6 @@ either half alone.
 
 ## Next
 
-- **The map and the cinema picker.** The three cinema endpoints are in, so
-  what is left is drawing them: a MapLibre map with clustering, because 130
-  markers at country zoom is one blob over Delhi, a city picker, and a nearby
-  list with distance badges on both the granted and the denied geolocation
-  path.
-- **The seat map reading `screen.aisle_after`** instead of the frontend's
-  hardcoded block widths. The column is populated with three room shapes and
-  the client still draws every house as 3 | 6 | 3.
-- **Real film data** from TMDB, ingested once offline and committed as SQL, so
-  the running service keeps exactly one third-party dependency. It also fills
-  `film.released_on`, which is what makes a weeks-since-release pricing rule
-  testable rather than an opinion.
 - **Email verification**, which is what makes claiming a guest booking by its
   address safe. The `booking_by_email` index already exists for it and goes
   deliberately unused until an address can be proven.
