@@ -40,11 +40,21 @@ public class ShowtimeSeeder {
        scheduled on Jaipur's clock and a Liverpool one on Liverpool's, and
        neither reads a server default or a global config value.
 
-       The film subquery is a ring. row_number gives each film a 0-based
+             The film subquery is a ring. row_number gives each film a 0-based
        position and count(*) OVER () gives the size, so "the next film" is
        ring_pos mod total, a join rather than a lookup. It takes whatever films
-       exist, so when TMDB lands and there are forty of them this statement
-       spreads them without a change. With no films at all the subquery has no
+       exist, so the film count can change without touching this statement.
+
+       The ring position is the screen and the day, and deliberately not the
+       slot. A screen runs one film across all four of its daily slots, which
+       is how a cinema actually schedules and what makes the grouped listing
+       read properly: four screens give four films a day with four times each.
+       With slot.idx in the position this worked only by accident, because 3
+       films meant "% 3" collided constantly. At 67 films it almost never
+       collides, so every slot got a different film and a four-screen cinema
+       advertised sixteen films a day with one screening each.
+
+       With no films at all the subquery has no
        rows, so the join produces nothing and the modulo is never evaluated.
        No division by zero to guard.
 
@@ -72,13 +82,13 @@ public class ShowtimeSeeder {
                                 + (sc.id % 4) * interval '5 minutes')
                              AT TIME ZONE ci.timezone        AS starts_at,
 
-                           sc.id + d.n + slot.idx            AS ring_pos
+                           sc.id + d.n           AS ring_pos
 
                     FROM screen sc
                     JOIN cinema ci ON ci.id = sc.cinema_id
                     CROSS JOIN generate_series(0, :lastDay) AS d(n)
-                    CROSS JOIN unnest(CAST(string_to_array(:slots, ',') AS time[]))
-                               WITH ORDINALITY AS slot(time_of_day, idx)
+                                       CROSS JOIN unnest(CAST(string_to_array(:slots, ',') AS time[]))
+                                                                                                       AS slot(time_of_day)
                  ) c
             JOIN (
                     SELECT id,

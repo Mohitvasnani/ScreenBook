@@ -49,7 +49,10 @@ public class ShowtimeQuery {
        The old version subtracted count(*) from booking and seat_hold, which
        counted bookings and holds rather than seats, so it over-reported
        availability for every multi-seat booking after V8. Occupancy now has one
-       definition and the pricing rules read the same view. */
+       definition and the pricing rules read the same view.
+
+       released_on and poster_path are both free here: film is already joined
+       for the title and the runtime. */
     private static final String SELECT_SHOWTIME = """
             SELECT st.id              AS id,
                    ci.id              AS cinema_id,
@@ -58,6 +61,7 @@ public class ShowtimeQuery {
                    st.starts_at       AS starts_at,
                    f.runtime_minutes  AS runtime_minutes,
                    f.released_on      AS released_on,
+                   f.poster_path      AS poster_path,
                    ci.currency        AS currency,
                    ci.timezone        AS timezone,
 
@@ -110,6 +114,9 @@ public class ShowtimeQuery {
        on film's primary key, which showtime.film_id already points at, and it
        holds the locks no meaningfully longer. Same trade as the two joins the
        timezone change added, and the same reasoning.
+
+       No poster_path here. The rules have no use for it, and a column read
+       inside a transaction holding row locks has to earn its place.
 
        An INNER JOIN, not a LEFT JOIN. showtime.film_id is NOT NULL with a
        foreign key, so every screening has a film and a left join would only
@@ -213,6 +220,7 @@ public class ShowtimeQuery {
                 rs.getString("currency"),
                 rs.getInt("seats_taken"),
                 rs.getInt("seats_total"),
-                rs.getObject("released_on", LocalDate.class));
+                rs.getObject("released_on", LocalDate.class),
+                rs.getString("poster_path"));
     }
 }

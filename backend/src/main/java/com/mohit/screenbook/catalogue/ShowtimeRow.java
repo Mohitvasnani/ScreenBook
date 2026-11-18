@@ -34,11 +34,10 @@ public record ShowtimeRow(
         String currency,
         int seatsTaken,
         int seatsTotal,
-        /* The film's release date, for the weeks-since-release rule. Nullable:
-           film.released_on has no CHECK and TMDB has no date for everything.
-           Also not carried onto ShowtimeSummary, because the client is shown
-           the price the rule produced, not the input that produced it. */
-        LocalDate releasedOn
+        /* Film-level, both nullable. releasedOn feeds the fifth pricing rule
+           and stops here. posterPath is passed through to the client. */
+        LocalDate releasedOn,
+        String posterPath
 ) {
 
     /** The same facts ShowtimePricingInputs states, from a listing row. */
