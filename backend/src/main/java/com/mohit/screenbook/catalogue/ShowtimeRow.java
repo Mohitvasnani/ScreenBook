@@ -1,6 +1,9 @@
 package com.mohit.screenbook.catalogue;
 
+import com.mohit.screenbook.pricing.ScreeningFacts;
+
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 
 /**
@@ -30,6 +33,16 @@ public record ShowtimeRow(
         int baseFromPriceMinor,
         String currency,
         int seatsTaken,
-        int seatsTotal
+        int seatsTotal,
+        /* The film's release date, for the weeks-since-release rule. Nullable:
+           film.released_on has no CHECK and TMDB has no date for everything.
+           Also not carried onto ShowtimeSummary, because the client is shown
+           the price the rule produced, not the input that produced it. */
+        LocalDate releasedOn
 ) {
+
+    /** The same facts ShowtimePricingInputs states, from a listing row. */
+    public ScreeningFacts facts() {
+        return new ScreeningFacts(seatsTaken, seatsTotal, startsAt, zone, releasedOn);
+    }
 }

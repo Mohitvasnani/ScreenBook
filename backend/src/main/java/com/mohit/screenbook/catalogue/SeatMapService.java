@@ -5,7 +5,7 @@ import com.mohit.screenbook.pricing.PriceRateView;
 import com.mohit.screenbook.pricing.PricingRules;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.mohit.screenbook.pricing.ScreeningFacts;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -54,15 +54,15 @@ public class SeatMapService {
         /* One breakdown per distinct listed price, so at most three for a
            house of 120 seats rather than 120. The rules are facts about the
            screening, so the only thing that differs between tiers is the base
-           they scale. */
+           they scale. facts() is read once outside the collector for the same
+           reason: it is the same record for every tier. */
+        ScreeningFacts screening = inputs.facts();
         Map<Integer, PriceBreakdown> byBase = rows.stream()
                 .map(SeatView::basePriceMinor)
                 .distinct()
                 .collect(Collectors.toMap(
                         base -> base,
-                        base -> pricing.priceFor(base,
-                                inputs.seatsTaken(), inputs.seatsTotal(),
-                                inputs.startsAt(), inputs.zone(), now)));
+                        base -> pricing.priceFor(base, screening, now)));
 
         List<SeatMapSeat> priced = rows.stream()
                 .map(row -> new SeatMapSeat(
@@ -75,6 +75,7 @@ public class SeatMapService {
 
         return new SeatMapResponse(showtimeId, priced, aisleAfter, rates(byBase));
     }
+
 
     /**
      * The percentages are the same whatever the base, so any one breakdown

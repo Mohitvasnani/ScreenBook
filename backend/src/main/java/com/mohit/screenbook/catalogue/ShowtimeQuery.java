@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -56,6 +57,7 @@ public class ShowtimeQuery {
                    sc.name            AS screen_name,
                    st.starts_at       AS starts_at,
                    f.runtime_minutes  AS runtime_minutes,
+                   f.released_on      AS released_on,
                    ci.currency        AS currency,
                    ci.timezone        AS timezone,
 
@@ -100,16 +102,30 @@ public class ShowtimeQuery {
     /* Everything the pricing rules need, in one read. seats_taken deliberately
        does not include the seats being claimed right now: the caller has locked
        those rows but not yet written a hold, so the view still reports them
-       AVAILABLE. Your own request never inflates your own price. */
+       AVAILABLE. Your own request never inflates your own price.
+
+       film joined for released_on, which is the fifth rule's input. Worth
+       naming the cost out loud, because this query runs inside the claim
+       transaction with the seat rows already locked: it is one more index probe
+       on film's primary key, which showtime.film_id already points at, and it
+       holds the locks no meaningfully longer. Same trade as the two joins the
+       timezone change added, and the same reasoning.
+
+       An INNER JOIN, not a LEFT JOIN. showtime.film_id is NOT NULL with a
+       foreign key, so every screening has a film and a left join would only
+       hide a broken database. released_on itself arriving NULL is the ordinary
+       case the rule handles. */
     private static final String PRICING_INPUTS = """
             SELECT occ.seats_taken  AS seats_taken,
                    occ.seats_total  AS seats_total,
                    st.starts_at     AS starts_at,
-                   ci.timezone      AS timezone
+                   ci.timezone      AS timezone,
+                   f.released_on    AS released_on
             FROM showtime st
             JOIN showtime_occupancy occ ON occ.showtime_id = st.id
             JOIN screen sc  ON sc.id = st.screen_id
             JOIN cinema ci  ON ci.id = sc.cinema_id
+            JOIN film   f   ON f.id  = st.film_id
             WHERE st.id = :showtimeId
             """;
 
@@ -177,7 +193,8 @@ public class ShowtimeQuery {
                         rs.getInt("seats_taken"),
                         rs.getInt("seats_total"),
                         rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
-                        ZoneId.of(rs.getString("timezone"))))
+                        ZoneId.of(rs.getString("timezone")),
+                        rs.getObject("released_on", LocalDate.class)))
                 .optional()
                 .orElseThrow(() -> new NotFoundException(
                         "No showtime with id %d.".formatted(showtimeId)));
@@ -195,6 +212,7 @@ public class ShowtimeQuery {
                 rs.getInt("base_from_price_minor"),
                 rs.getString("currency"),
                 rs.getInt("seats_taken"),
-                rs.getInt("seats_total"));
+                rs.getInt("seats_total"),
+                rs.getObject("released_on", LocalDate.class));
     }
 }

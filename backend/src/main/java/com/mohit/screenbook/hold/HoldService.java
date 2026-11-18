@@ -170,12 +170,10 @@ public class HoldService {
         if (!inputs.startsAt().isAfter(now)) {
             throw new ShowtimeStartedException();
         }
-        /* Every row carries the same listed price, because a hold covers one
+                /* Every row carries the same listed price, because a hold covers one
            tier, so the first is the base for the whole hold. */
         PriceBreakdown price = pricing.priceFor(
-                rows.getFirst().basePriceMinor(),
-                inputs.seatsTaken(), inputs.seatsTotal(),
-                inputs.startsAt(), inputs.zone(), now);
+                rows.getFirst().basePriceMinor(), inputs.facts(), now);
 
         SeatHold hold = holds.save(
                 SeatHold.claim(showtimeId, ordered, price, now, ttl));

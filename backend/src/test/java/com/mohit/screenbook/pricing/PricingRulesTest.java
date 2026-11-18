@@ -6,8 +6,10 @@ import org.junit.jupiter.api.Test;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,8 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * purpose. A test that reads production config breaks the moment you tune a
  * band for the demo, which makes tuning the demo frightening.
  *
- * Every case isolates one rule by keeping the other three in their zero band:
- * an empty house, a Wednesday, mid-afternoon, three days out.
+ * Every case isolates one rule by keeping the other four in their zero band:
+ * an empty house, a Wednesday, mid-afternoon, three days out, and a film whose
+ * release date is unknown.
  */
 class PricingRulesTest {
 
@@ -42,6 +45,9 @@ class PricingRulesTest {
     /** Wednesday 11 November 2026, 14:00 in Asia/Kolkata, which is 08:30 UTC. */
     private static final Instant WED_AFTERNOON = Instant.parse("2026-11-11T08:30:00Z");
 
+    /** The same moment as a date in Asia/Kolkata, which is what the fifth rule sees. */
+    private static final LocalDate SCREENING_DATE = LocalDate.of(2026, 11, 11);
+
     private static PricingRules rules() {
         return rules(4000);
     }
@@ -54,7 +60,25 @@ class PricingRulesTest {
                         500, LocalTime.of(17, 0), LocalTime.of(22, 59)),
                 new PricingProperties.Weekend(
                         500, EnumSet.of(DayOfWeek.FRIDAY, DayOfWeek.SATURDAY)),
+                new PricingProperties.WeeksSinceRelease(1500, 1000, 500, 1, 4),
                 maxAdjustmentBp));
+    }
+
+    /**
+     * The screening as the rules see it, with everything in its zero band.
+     *
+     * releasedOn is null in the short overload, which is the fifth rule's zero
+     * band in the way an empty house is occupancy's. That is what keeps every
+     * assertion here the number it was before a fifth rule existed.
+     */
+    private static ScreeningFacts facts(Instant startsAt, ZoneId zone) {
+        return facts(0, SEATS, startsAt, zone, null);
+    }
+
+    private static ScreeningFacts facts(int seatsTaken, int seatsTotal,
+                                        Instant startsAt, ZoneId zone,
+                                        LocalDate releasedOn) {
+        return new ScreeningFacts(seatsTaken, seatsTotal, startsAt, zone, releasedOn);
     }
 
     private static Instant daysBefore(Instant startsAt, int days) {
@@ -90,13 +114,14 @@ class PricingRulesTest {
     @DisplayName("an empty midweek matinee three days out costs the listed price")
     void neutralCaseIsUnchanged() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, SEATS, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
+                BASE, facts(WED_AFTERNOON, KOLKATA), daysBefore(WED_AFTERNOON, 3));
 
         assertEquals(BASE, b.adjustedPriceMinor());
         assertEquals(0, bpOf(b, PricingRules.OCCUPANCY));
         assertEquals(0, bpOf(b, PricingRules.LEAD_TIME));
         assertEquals(0, bpOf(b, PricingRules.TIME_OF_DAY));
         assertEquals(0, bpOf(b, PricingRules.DAY_OF_WEEK));
+        assertEquals(0, bpOf(b, PricingRules.WEEKS_SINCE_RELEASE));
         assertAddsUp(b);
     }
 
@@ -104,19 +129,20 @@ class PricingRulesTest {
     @DisplayName("every rule produces a line even when it does not fire")
     void zeroBandsStillProduceLines() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, SEATS, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
+                BASE, facts(WED_AFTERNOON, KOLKATA), daysBefore(WED_AFTERNOON, 3));
 
-        /* Four lines, not zero. Storing the bands that did not fire is what
+        /* Five lines, not zero. Storing the bands that did not fire is what
            keeps "this rule did not apply" distinguishable from "this rule did
            not exist when the hold was taken". The API filters the zeros. */
-        assertEquals(4, b.rules().size());
+        assertEquals(5, b.rules().size());
     }
 
     // ------------------------------------------------------------ occupancy
 
     private int occupancyBpFor(int seatsTaken) {
-        return bpOf(rules().priceFor(BASE, seatsTaken, SEATS,
-                WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3)),
+        return bpOf(rules().priceFor(BASE,
+                        facts(seatsTaken, SEATS, WED_AFTERNOON, KOLKATA, null),
+                        daysBefore(WED_AFTERNOON, 3)),
                 PricingRules.OCCUPANCY);
     }
 
@@ -134,7 +160,8 @@ class PricingRulesTest {
     @DisplayName("a screen with no seats does not divide by zero")
     void emptyScreenIsNotAnError() {
         PriceBreakdown b = rules().priceFor(
-                BASE, 0, 0, WED_AFTERNOON, KOLKATA, daysBefore(WED_AFTERNOON, 3));
+                BASE, facts(0, 0, WED_AFTERNOON, KOLKATA, null),
+                daysBefore(WED_AFTERNOON, 3));
 
         assertEquals(0, bpOf(b, PricingRules.OCCUPANCY));
         assertAddsUp(b);
@@ -143,8 +170,8 @@ class PricingRulesTest {
     // ------------------------------------------------------------ lead time
 
     private int leadTimeBpFor(Duration until) {
-        return bpOf(rules().priceFor(BASE, 0, SEATS,
-                WED_AFTERNOON, KOLKATA, WED_AFTERNOON.minus(until)),
+        return bpOf(rules().priceFor(BASE,
+                        facts(WED_AFTERNOON, KOLKATA), WED_AFTERNOON.minus(until)),
                 PricingRules.LEAD_TIME);
     }
 
@@ -165,7 +192,7 @@ class PricingRulesTest {
 
     private int timeOfDayBpFor(String startsAt) {
         Instant start = Instant.parse(startsAt);
-        return bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, daysBefore(start, 3)),
+        return bpOf(rules().priceFor(BASE, facts(start, KOLKATA), daysBefore(start, 3)),
                 PricingRules.TIME_OF_DAY);
     }
 
@@ -187,7 +214,7 @@ class PricingRulesTest {
 
     private int dayOfWeekBpFor(String startsAt) {
         Instant start = Instant.parse(startsAt);
-        return bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, daysBefore(start, 3)),
+        return bpOf(rules().priceFor(BASE, facts(start, KOLKATA), daysBefore(start, 3)),
                 PricingRules.DAY_OF_WEEK);
     }
 
@@ -205,6 +232,82 @@ class PricingRulesTest {
                 "Saturday 00:30 in Kolkata");
         assertEquals(0,   dayOfWeekBpFor("2026-11-14T19:00:00Z"),
                 "Saturday in UTC, Sunday 00:30 in Kolkata");
+    }
+
+    // -------------------------------------------------- weeks since release
+
+    private int releaseBpFor(LocalDate releasedOn) {
+        return bpOf(rules().priceFor(BASE,
+                        facts(0, SEATS, WED_AFTERNOON, KOLKATA, releasedOn),
+                        daysBefore(WED_AFTERNOON, 3)),
+                PricingRules.WEEKS_SINCE_RELEASE);
+    }
+
+    /** Every boundary, with openingWeeks 1 and recentWeeks 4 as exclusive bounds. */
+    @Test
+    @DisplayName("release age bands, at every boundary")
+    void weeksSinceReleaseBands() {
+        assertEquals(1500, releaseBpFor(SCREENING_DATE.plusDays(1)),
+                "out tomorrow: a preview");
+        assertEquals(1000, releaseBpFor(SCREENING_DATE),
+                "out today: week zero");
+        assertEquals(1000, releaseBpFor(SCREENING_DATE.minusDays(6)),
+                "six days old is still week zero");
+        assertEquals(500,  releaseBpFor(SCREENING_DATE.minusDays(7)),
+                "seven days old is one week, out of the opening band");
+        assertEquals(500,  releaseBpFor(SCREENING_DATE.minusDays(27)),
+                "three weeks old is still recent");
+        assertEquals(0,    releaseBpFor(SCREENING_DATE.minusDays(28)),
+                "four weeks old is a long run");
+        assertEquals(0,    releaseBpFor(null),
+                "an unknown release date makes no claim");
+    }
+
+    /**
+     * The regression test for the truncation trap, asserted directly so the
+     * reason the guard compares dates is in the file rather than only in a
+     * comment.
+     */
+    @Test
+    @DisplayName("a premiere the day before release is a preview, not opening week")
+    void aPremiereIsNotClampedIntoOpeningWeek() {
+        LocalDate releasesTomorrow = SCREENING_DATE.plusDays(1);
+
+        assertEquals(0, ChronoUnit.WEEKS.between(releasesTomorrow, SCREENING_DATE),
+                "the trap: the gap truncates to zero weeks, not a negative");
+        assertEquals(1500, releaseBpFor(releasesTomorrow),
+                "so a weeks < 0 test would have priced this as opening week");
+    }
+
+    /**
+     * Why the count runs from the screening and not from today. If it ran from
+     * now, the earlier booking would be a preview and the later one would not.
+     */
+    @Test
+    @DisplayName("booking later does not change the release band")
+    void theBandBelongsToTheScreeningNotTheBooking() {
+        ScreeningFacts screening = facts(
+                0, SEATS, WED_AFTERNOON, KOLKATA, SCREENING_DATE.minusDays(6));
+
+        assertEquals(
+                bpOf(rules().priceFor(BASE, screening, daysBefore(WED_AFTERNOON, 30)),
+                        PricingRules.WEEKS_SINCE_RELEASE),
+                bpOf(rules().priceFor(BASE, screening, daysBefore(WED_AFTERNOON, 3)),
+                        PricingRules.WEEKS_SINCE_RELEASE),
+                "the same screening prices the same whenever it is booked");
+    }
+
+    @Test
+    @DisplayName("a firing release band is one line and still adds up")
+    void aFiringReleaseBandAddsUp() {
+        PriceBreakdown b = rules().priceFor(BASE,
+                facts(0, SEATS, WED_AFTERNOON, KOLKATA, SCREENING_DATE),
+                daysBefore(WED_AFTERNOON, 3));
+
+        assertEquals(1000, bpOf(b, PricingRules.WEEKS_SINCE_RELEASE));
+        assertEquals(22_000, b.adjustedPriceMinor(), "10 percent on 200 rupees");
+        assertEquals(5, b.rules().size());
+        assertAddsUp(b);
     }
 
     // ------------------------------------------------------------- the zone
@@ -227,11 +330,11 @@ class PricingRulesTest {
         Instant now = daysBefore(start, 3);
 
         assertEquals(500,
-                bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, now),
+                bpOf(rules().priceFor(BASE, facts(start, KOLKATA), now),
                         PricingRules.TIME_OF_DAY),
                 "19:30 in Jaipur is an evening show");
         assertEquals(0,
-                bpOf(rules().priceFor(BASE, 0, SEATS, start, LIVERPOOL, now),
+                bpOf(rules().priceFor(BASE, facts(start, LIVERPOOL), now),
                         PricingRules.TIME_OF_DAY),
                 "14:00 in Liverpool is not");
     }
@@ -251,11 +354,11 @@ class PricingRulesTest {
         Instant now = daysBefore(start, 3);
 
         assertEquals(500,
-                bpOf(rules().priceFor(BASE, 0, SEATS, start, KOLKATA, now),
+                bpOf(rules().priceFor(BASE, facts(start, KOLKATA), now),
                         PricingRules.DAY_OF_WEEK),
                 "already Friday 04:30 in Jaipur");
         assertEquals(0,
-                bpOf(rules().priceFor(BASE, 0, SEATS, start, LIVERPOOL, now),
+                bpOf(rules().priceFor(BASE, facts(start, LIVERPOOL), now),
                         PricingRules.DAY_OF_WEEK),
                 "still Thursday 23:00 in Liverpool");
     }
@@ -266,6 +369,9 @@ class PricingRulesTest {
      * The headline case, and the row from the price table that was agreed:
      * a 200 rupee seat becomes 280 at full tilt. Pinned as a test so tuning a
      * band cannot quietly change the number in the README.
+     *
+     * Four rules fire, not five: the release date is unknown, so the fifth
+     * contributes a zero line. That is why the figure is still 280.
      */
     @Test
     @DisplayName("full house, Friday evening, three hours out: 200 becomes 280")
@@ -273,15 +379,17 @@ class PricingRulesTest {
         // Friday 13 November 2026, 19:00 Asia/Kolkata
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules().priceFor(
-                BASE, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
+                BASE, facts(SEATS, SEATS, start, KOLKATA, null),
+                start.minus(Duration.ofHours(3)));
 
         assertEquals(2000, bpOf(b, PricingRules.OCCUPANCY));
         assertEquals(1000, bpOf(b, PricingRules.LEAD_TIME));
         assertEquals(500,  bpOf(b, PricingRules.TIME_OF_DAY));
         assertEquals(500,  bpOf(b, PricingRules.DAY_OF_WEEK));
+        assertEquals(0,    bpOf(b, PricingRules.WEEKS_SINCE_RELEASE));
 
         assertEquals(28_000, b.adjustedPriceMinor());
-        assertEquals(4, b.rules().size(), "the cap must not fire at exactly the ceiling");
+        assertEquals(5, b.rules().size(), "the cap must not fire at exactly the ceiling");
         assertAddsUp(b);
     }
 
@@ -290,7 +398,8 @@ class PricingRulesTest {
     void allFourRulesOnADearerSeat() {
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules().priceFor(
-                55_000, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
+                55_000, facts(SEATS, SEATS, start, KOLKATA, null),
+                start.minus(Duration.ofHours(3)));
 
         assertEquals(77_000, b.adjustedPriceMinor());
         assertAddsUp(b);
@@ -299,12 +408,12 @@ class PricingRulesTest {
     // ------------------------------------------------------------------ cap
 
     /**
-     * The shipped config cannot reach the cap, because the four bands sum to
-     * exactly the ceiling. So this lowers the ceiling to prove the clamp
-     * works rather than shipping it hot.
+     * This file's own config cannot reach the cap, because the four firing
+     * bands sum to exactly its ceiling. So this lowers the ceiling to prove
+     * the clamp works rather than shipping it hot.
      *
      * The cap is a line on the receipt, not a silent truncation. That is what
-     * keeps assertAddsUp true: if the clamp just shrank the total, the four
+     * keeps assertAddsUp true: if the clamp just shrank the total, the rule
      * lines would sum to more than the price charged.
      */
     @Test
@@ -312,11 +421,12 @@ class PricingRulesTest {
     void capIsALineNotATruncation() {
         Instant start = Instant.parse("2026-11-13T13:30:00Z");
         PriceBreakdown b = rules(3000).priceFor(
-                BASE, SEATS, SEATS, start, KOLKATA, start.minus(Duration.ofHours(3)));
+                BASE, facts(SEATS, SEATS, start, KOLKATA, null),
+                start.minus(Duration.ofHours(3)));
 
-        assertEquals(5, b.rules().size(), "four rules plus the cap");
+        assertEquals(6, b.rules().size(), "five rules plus the cap");
         assertEquals(-1000, bpOf(b, PricingRules.CAP),
-                "the four rules wanted 4000, the ceiling is 3000");
+                "the rules wanted 4000, the ceiling is 3000");
         assertEquals(26_000, b.adjustedPriceMinor(), "capped at 30 percent of 200");
         assertAddsUp(b);
     }

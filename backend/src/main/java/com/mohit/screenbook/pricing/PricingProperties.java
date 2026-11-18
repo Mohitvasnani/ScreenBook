@@ -18,6 +18,7 @@ public record PricingProperties(
         LeadTime leadTime,
         TimeOfDay timeOfDay,
         Weekend dayOfWeek,
+        WeeksSinceRelease weeksSinceRelease,
 
         /* No zone here. Which zone decides whether a show is an evening or a
            weekend one is a fact about the cinema, not about the application,
@@ -28,7 +29,7 @@ public record PricingProperties(
 
         /**
          * Ceiling on the total adjustment. A backstop, not part of the model:
-         * the four rules sum to exactly this, so it cannot fire with the
+         * the five rules sum to exactly this, so it cannot fire with the
          * shipped config. It exists so a mistyped band cannot produce a
          * four-figure ticket, and because a legal ceiling has to be
          * expressible somewhere. Several Indian states cap ticket prices.
@@ -50,5 +51,18 @@ public record PricingProperties(
     }
 
     public record Weekend(int weekendBp, Set<DayOfWeek> weekendDays) {
+    }
+
+    /**
+     * How old the film is on the day it is shown, in whole weeks.
+     *
+     * Four outcomes rather than three, because a screening dated before the
+     * film's release is a premiere and not an extreme case of opening week.
+     * openingWeeks and recentWeeks are exclusive upper bounds, matching
+     * LeadTime, so the labels can be built from the thresholds instead of
+     * being written out and going stale.
+     */
+    public record WeeksSinceRelease(int previewBp, int openingBp, int recentBp,
+                                    int openingWeeks, int recentWeeks) {
     }
 }

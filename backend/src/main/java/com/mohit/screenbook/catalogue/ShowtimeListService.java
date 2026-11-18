@@ -3,7 +3,7 @@ package com.mohit.screenbook.catalogue;
 import com.mohit.screenbook.pricing.PricingRules;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.mohit.screenbook.pricing.ScreeningFacts;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -55,6 +55,8 @@ public class ShowtimeListService {
 
     /* Shared so a screening read on its own and the same screening read in a
        list cannot be priced by two different pieces of code. */
+        /* Shared so a screening read on its own and the same screening read in a
+       list cannot be priced by two different pieces of code. */
     private ShowtimeSummary priced(ShowtimeRow row, Instant now) {
         return new ShowtimeSummary(
                 row.id(),
@@ -64,10 +66,8 @@ public class ShowtimeListService {
                 row.startsAt(),
                 row.runtimeMinutes(),
                 row.baseFromPriceMinor(),
-                pricing.priceFor(
-                        row.baseFromPriceMinor(),
-                        row.seatsTaken(), row.seatsTotal(),
-                        row.startsAt(), row.zone(), now).adjustedPriceMinor(),
+                pricing.priceFor(row.baseFromPriceMinor(), row.facts(), now)
+                        .adjustedPriceMinor(),
                 row.currency(),
                 row.seatsTotal() - row.seatsTaken(),
                 row.seatsTotal());

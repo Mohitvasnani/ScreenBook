@@ -4,9 +4,10 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,6 +33,7 @@ public class PricingRules {
     static final String LEAD_TIME = "LEAD_TIME";
     static final String TIME_OF_DAY = "TIME_OF_DAY";
     static final String DAY_OF_WEEK = "DAY_OF_WEEK";
+    static final String WEEKS_SINCE_RELEASE = "WEEKS_SINCE_RELEASE";
     static final String CAP = "CAP";
 
     private final PricingProperties config;
@@ -47,33 +49,28 @@ public class PricingRules {
      * storing the bands that did not fire is what keeps "this rule did not
      * apply" distinguishable from "this rule did not exist when the hold was
      * taken". The API filters the zeros out; the database keeps them.
+     *
+     * Three parameters, not seven: everything describing the screening
+     * arrives as one record, so a caller cannot swap two Instants and still
+     * compile.
      */
     public PriceBreakdown priceFor(int basePriceMinor,
-                                   int seatsTaken, int seatsTotal,
-                                   Instant startsAt, ZoneId zone, Instant now) {
+                                   ScreeningFacts screening,
+                                   Instant now) {
 
-        /* Worked out once and passed down. Both time-based rules are questions
-           about a local clock, and startsAt is an instant, which has no local
-           time until a zone names one.
-
-           The zone is the cinema's, not the application's, and it arrives as a
-           parameter beside startsAt because the two are never useful apart. A
-           single configured zone priced a 19:10 Liverpool screening by
-           Kolkata's clock, where it is 00:40 and not an evening at all.
-
-           zone and startsAt travelling as two loose parameters is the one
-           compromise here. The honest shape is a small value type owned by
-           this package: pricing cannot take catalogue's
-           ShowtimePricingInputs without making a package cycle, because
-           catalogue already depends on pricing. That is a refactor rather
-           than part of this fix. */
-        ZonedDateTime local = startsAt.atZone(zone);
+        /* Worked out once and passed down. Three rules ask about a local clock
+           or a local date, and an instant has neither until a zone names one.
+           The zone is the cinema's and travels inside ScreeningFacts. */
+        ZonedDateTime local = screening.startsAt().atZone(screening.zone());
 
         List<PriceRule> lines = new ArrayList<>(List.of(
-                occupancyLine(basePriceMinor, seatsTaken, seatsTotal),
-                leadTimeLine(basePriceMinor, startsAt, now),
+                occupancyLine(basePriceMinor,
+                        screening.seatsTaken(), screening.seatsTotal()),
+                leadTimeLine(basePriceMinor, screening.startsAt(), now),
                 timeOfDayLine(basePriceMinor, local),
-                dayOfWeekLine(basePriceMinor, local)));
+                dayOfWeekLine(basePriceMinor, local),
+                weeksSinceReleaseLine(basePriceMinor,
+                        screening.releasedOn(), local.toLocalDate())));
 
         int totalBp = lines.stream().mapToInt(PriceRule::basisPoints).sum();
         int totalAdjustment = lines.stream().mapToInt(PriceRule::adjustmentMinor).sum();
@@ -90,7 +87,7 @@ public class PricingRules {
             lines.add(new PriceRule(CAP, "Capped",
                     ceiling - totalBp,
                     cappedAdjustment - totalAdjustment,
-                    5));
+                    6));
             totalAdjustment = cappedAdjustment;
         }
 
@@ -173,6 +170,48 @@ public class PricingRules {
         return band.weekendDays().contains(local.getDayOfWeek())
                 ? line(DAY_OF_WEEK, "Weekend", band.weekendBp(), base, 4)
                 : line(DAY_OF_WEEK, "Weekday", 0, base, 4);
+    }
+
+    /**
+     * How old the film is on the day it is shown, in whole weeks.
+     *
+     * Counted from the screening's own local date, not from today, so the band
+     * belongs to the screening and booking later cannot change it.
+     *
+     * Four outcomes, not three: a screening dated before release is a
+     * premiere, not a clamped negative, and labelling one "opening week" would
+     * be the one line on the receipt that is not true.
+     */
+    private PriceRule weeksSinceReleaseLine(int base, LocalDate releasedOn,
+                                            LocalDate screeningDate) {
+        PricingProperties.WeeksSinceRelease band = config.weeksSinceRelease();
+
+        /* First: WEEKS.between throws on a null. An unknown date is not zero
+           weeks, so it makes no claim and adds nothing. */
+        if (releasedOn == null) {
+            return line(WEEKS_SINCE_RELEASE, "Release date unknown", 0, base, 5);
+        }
+
+        /* Tested on the dates, not on the week count. WEEKS.between truncates
+           toward zero like Duration.toHours above, so a film out tomorrow is 0
+           weeks old and "weeks < 0" would never fire. */
+        if (screeningDate.isBefore(releasedOn)) {
+            return line(WEEKS_SINCE_RELEASE, "Preview", band.previewBp(), base, 5);
+        }
+
+        long weeks = ChronoUnit.WEEKS.between(releasedOn, screeningDate);
+
+        if (weeks < band.openingWeeks()) {
+            return line(WEEKS_SINCE_RELEASE,
+                    "Under %d weeks since release".formatted(band.openingWeeks()),
+                    band.openingBp(), base, 5);
+        }
+        if (weeks < band.recentWeeks()) {
+            return line(WEEKS_SINCE_RELEASE,
+                    "Under %d weeks since release".formatted(band.recentWeeks()),
+                    band.recentBp(), base, 5);
+        }
+        return line(WEEKS_SINCE_RELEASE, "Long run", 0, base, 5);
     }
 
     /* One place where a line's money amount is worked out, so no band can
