@@ -48,16 +48,46 @@ figures through a `.tnum` utility wherever numbers sit in a column.
 
 ## Pages (9)
 
-### 1. `/` Showtimes
+### 1. `/` Find a cinema
 
-**Role:** pick a screening. The entry point.
+**Role:** pick a building. The entry point. It stopped being a showtimes list
+in wave 5, when one cinema's screenings became the only listing anyone can
+read: there are over six thousand upcoming screenings across two countries.
 
-**Shows:** a list of 5 showtimes. Each has film title, screen name, start time,
-runtime, ticket price, and how many of 120 seats are free.
+**Shows:** a full-bleed hero with a globe on the right, running off the edge of
+the screen, and a panel on the left carrying an eyebrow, the heading, a
+two-country toggle and a row of city chips. Under it, the same cinemas as a
+list: grouped by country then city when no country is chosen, by city when one
+is.
 
-**Action:** tap a showtime, go to its seat map.
+**The globe is a MapLibre map, not an image.** Globe projection over MapTiler's
+dataviz-dark, with every country that is not GB or IN washed out in the page
+background and the wash fading as you zoom. One accent pin per city, labelled
+in a nine-patch chip, handing over to individual cinemas at z8.
 
-**States:** loading, loaded, empty (no screenings), error with retry.
+**Action:** choose a country and the camera frames that whole country. Choose a
+city, from a chip or from the globe itself, and it frames that city's cinemas.
+Click a cinema and it flies to its street and names it in a popup, with a link
+onward to what is on there. Press the chosen country again to go back out to
+the planet.
+
+**The camera has one rule:** frame what was asked about, derived from the same
+rows the list is built from. Only the opening planet is a fixed camera, because
+it is deliberately framing nothing.
+
+**States:** nothing chosen (planet, both countries listed), country, city,
+cinema. Plus loading, error with retry, and a declined geolocation permission,
+which is a quiet line of text rather than an error because the list underneath
+is a complete way to use the site.
+
+**Accessibility:** a canvas cannot be read out, so the list below is the
+equivalent rather than a fallback, and the page says so. The map is not hidden
+from assistive tech, because that would hide the tile credit with it.
+
+Its sibling `/cinemas/[cinemaId]` is the showtimes listing for one building:
+the film, screen, start time in that cinema's own timezone, runtime, from-price
+and seats free, read in two requests so the cinema's zone arrives before any
+time is printed.
 
 ### 2. `/showtimes/[id]` Seat selection
 

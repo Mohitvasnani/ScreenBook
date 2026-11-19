@@ -229,6 +229,17 @@ which is also why the API sends a poster path rather than a URL: the size
 belongs to whatever is rendering it, and baking one in would make changing a
 thumbnail an API change.
 
+The home page is a globe. MapLibre's globe projection over MapTiler tiles, with
+one accent pin per city, and a camera with a single rule: frame whatever was
+asked about. Choosing a country frames that country's cinemas, choosing a city
+frames that city's, clicking a cinema flies to its street. All three come from
+the same rows the list underneath is built from, so the map and the list cannot
+disagree about where anything is, and there is no hand-tuned zoom level in the
+project. The countries the dataset covers are revealed rather than drawn:
+everything else is washed out in the page background, and the wash fades as you
+descend. The whole view was built over an API that did not change, which is the
+argument for the API having been designed rather than grown.
+
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ### Screenings are seeded at startup, not by a migration
@@ -431,6 +442,7 @@ either half alone.
 | Backend | Java 21, Spring Boot 4.1.1, Spring Security 7, Hibernate 7, Gradle 9.7 |
 | Database | PostgreSQL 18 with PostGIS 3.6, Flyway 12, HikariCP |
 | Frontend | Next.js 16.4, React 19, TypeScript, CSS Modules, MSW |
+| Maps | MapLibre GL JS 6 (globe projection), MapTiler vector tiles and Countries, OpenStreetMap data |
 | Testing | JUnit 5, Testcontainers |
 | Docs | springdoc-openapi, Swagger UI |
 | Mail | Brevo, behind a `Mailer` interface with a logging implementation |
