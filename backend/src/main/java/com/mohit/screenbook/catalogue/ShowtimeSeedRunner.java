@@ -6,7 +6,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-
+import org.springframework.core.annotation.Order;
 /**
  * Calls the seeder once at startup.
  *
@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @ConditionalOnProperty(name = "screenbook.seed.enabled", havingValue = "true")
+@Order(2)
 class ShowtimeSeedRunner implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ShowtimeSeedRunner.class);
