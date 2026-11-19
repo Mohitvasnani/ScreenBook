@@ -4,14 +4,21 @@
    exported under two names and MapLibreMap is the one to take: importing it as
    Map would shadow the built-in Map, which this codebase uses for grouping
    rows and seats. */
-import { GeoJSONSource, MapLibreMap, Popup, setWorkerUrl, LngLatBounds } from "maplibre-gl";
+import { GeoJSONSource, LngLatBounds, MapLibreMap, Popup, setWorkerUrl } from "maplibre-gl";
 import type { FeatureCollection, Point } from "geojson";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 import styles from "@/css/CinemaMap.module.css";
 import type { Cinema } from "@/types/api";
-import { CAMERA,  marketOf, type Market } from "@/utils/markets";
+import {
+  FRAME_PADDING,
+  GROUND_BEARING,
+  GROUND_PITCH,
+  PLANET,
+  marketOf,
+  type Market,
+} from "@/utils/markets";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -28,11 +35,7 @@ setWorkerUrl("/maplibre-gl-worker.js");
 /* Public by necessity. The browser is what talks to MapTiler, so this is
    compiled into the page and anyone can read it out of the source. The
    protection is the domain restriction on the key in MapTiler's dashboard,
-   not secrecy.
-
-   Worth contrasting with API_ORIGIN, which is deliberately server-side because
-   the browser never needs to know where the API lives. Two environment
-   variables, opposite answers, each correct for its own reason. */
+   not secrecy. */
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY;
 
 const styleUrl = (key: string) =>
@@ -44,12 +47,18 @@ const styleUrl = (key: string) =>
 const countriesUrl = (key: string) =>
   `https://api.maptiler.com/tiles/countries/tiles.json?key=${key}`;
 
-/* The zoom at which city pins hand over to individual cinemas. One number
-   used as both layers' boundary, so there is no gap and no overlap. */
+/* The zoom at which city pins hand over to individual cinemas. */
 const PIN_HANDOVER = 8;
+
+/* Where a cinema click lands: close enough to see the building's street, not
+   so close that there is no sense of where in the city it is. */
+const STREET_ZOOM = 16;
 
 /* Below this, MapTiler's own labels do not exist. See the sweep in style.load. */
 const BASEMAP_LABELS_FROM = 6;
+
+/* One pulse of the city glow, in milliseconds. */
+const PULSE_MS = 2600;
 
 /* MapLibre paints into a canvas and cannot resolve CSS variables, so the theme
    is read out of the stylesheet once instead of hardcoded. It parses the
@@ -58,16 +67,19 @@ const BASEMAP_LABELS_FROM = 6;
 const colour = (value: string, fallback: string) =>
   /^(#|rgb|hsl)/.test(value.trim()) ? value.trim() : fallback;
 
+/* A null market means no country has been chosen, which is the opening state
+   and shows everything. One predicate so that rule is stated once. */
+const inMarket = (cinema: Cinema, market: Market | null) =>
+  market === null || marketOf(cinema) === market;
 
 /* The board draws each city label as a dark chip with a one pixel border.
    MapLibre has no "background" property for a label, but it can fit an icon
    to the text, and an icon can be a nine patch: name the slice of it that is
-   allowed to stretch and the corners keep their radius at any width. So the
-   chip is drawn once into a canvas and resized per label by the renderer.
+   allowed to stretch and the corners keep their radius at any width.
 
    Returns null rather than throwing if the canvas is unavailable. A missing
    icon makes MapLibre skip the icon and draw the text anyway, so the worst
-   case is the labels we already had. */
+   case is a plain label. */
 function chipImage(fill: string, stroke: string): ImageData | null {
   const size = 48; /* 24 CSS pixels at pixelRatio 2 */
   const canvas = document.createElement("canvas");
@@ -88,15 +100,13 @@ function chipImage(fill: string, stroke: string): ImageData | null {
   return ctx.getImageData(0, 0, size, size);
 }
 
-
-
 /* The market is filtered out here, in the data, rather than with a layer
-   filter, so the two sources below only ever describe one country. */
-function featuresFor(cinemas: Cinema[], market: Market): FeatureCollection<Point> {
+   filter, so the sources only ever describe what is being looked at. */
+function featuresFor(cinemas: Cinema[], market: Market | null): FeatureCollection<Point> {
   return {
     type: "FeatureCollection",
     features: cinemas
-      .filter((cinema) => marketOf(cinema) === market)
+      .filter((cinema) => inMarket(cinema, market))
       .map((cinema) => ({
         type: "Feature",
         geometry: {
@@ -118,17 +128,15 @@ function featuresFor(cinemas: Cinema[], market: Market): FeatureCollection<Point
    This replaces MapLibre's clustering, which grouped by pixel distance: a
    grouping that changes when the camera moves and means nothing on its own.
    A city is a grouping that exists in the world, it is what the list below is
-   grouped by, and it is the thing a viewer wants to click. The globe and the
-   list now say the same thing.
+   grouped by, and it is the thing a viewer wants to click.
 
    A mean of longitudes is wrong for a city straddling the antimeridian.
-   Neither country comes near it, and the alternative is trigonometry to place
-   a dot that is decorative to within a few hundred metres anyway. */
-function citiesFor(cinemas: Cinema[], market: Market): FeatureCollection<Point> {
+   Neither country comes near it. */
+function citiesFor(cinemas: Cinema[], market: Market | null): FeatureCollection<Point> {
   const cities = new Map<string, { count: number; lon: number; lat: number }>();
 
   for (const cinema of cinemas) {
-    if (marketOf(cinema) !== market) continue;
+    if (!inMarket(cinema, market)) continue;
     const seen = cities.get(cinema.city);
     if (seen) {
       seen.count += 1;
@@ -156,6 +164,62 @@ function citiesFor(cinemas: Cinema[], market: Market): FeatureCollection<Point> 
   };
 }
 
+/* The rows the camera should be able to see. */
+function boundsOf(
+  cinemas: Cinema[],
+  market: Market | null,
+  city: string | null,
+): LngLatBounds {
+  const bounds = new LngLatBounds();
+  for (const cinema of cinemas) {
+    if (!inMarket(cinema, market)) continue;
+    if (city !== null && cinema.city !== city) continue;
+    bounds.extend([cinema.longitude, cinema.latitude]);
+  }
+  return bounds;
+}
+
+/* The whole camera model, in one function, called from two places: once when
+   the map first loads and once whenever the selection changes.
+
+   Frame what was asked about. A country frames that country's cinemas, a city
+   frames that city's. Both come out of the same rows the list below is built
+   from, so the globe and the list cannot disagree about where anything is,
+   and neither of them has a zoom number in it that someone tuned by eye.
+
+   Nothing selected is the only fixed camera: a planet, turned on its axis,
+   framing nothing in particular because nothing has been asked yet. */
+function frameCamera(
+  map: MapLibreMap,
+  cinemas: Cinema[],
+  market: Market | null,
+  city: string | null,
+  animate: boolean,
+) {
+  const bounds =
+    market !== null || city !== null ? boundsOf(cinemas, market, city) : null;
+
+  if (bounds && !bounds.isEmpty()) {
+    map.fitBounds(bounds, {
+      padding: FRAME_PADDING,
+      /* A city with one cinema has bounds of zero size, which fits at
+         infinite zoom. A country never wants to be closer than this. */
+      maxZoom: city !== null ? 12 : 7,
+      bearing: GROUND_BEARING,
+      pitch: GROUND_PITCH,
+      duration: animate ? 2600 : 0,
+      animate,
+    });
+    return;
+  }
+
+  if (animate) {
+    map.flyTo({ ...PLANET, duration: 2400 });
+  } else {
+    map.jumpTo(PLANET);
+  }
+}
+
 export function CinemaMap({
   cinemas,
   market,
@@ -163,7 +227,7 @@ export function CinemaMap({
   onPickCity,
 }: {
   cinemas: Cinema[];
-  market: Market;
+  market: Market | null;
   city: string | null;
   onPickCity: (city: string) => void;
 }) {
@@ -172,18 +236,20 @@ export function CinemaMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
   const marketRef = useRef(market);
+  const cityRef = useRef(city);
   const pickRef = useRef(onPickCity);
 
   /* Declared first so it runs first: effects fire in declaration order, so
      these are current before the map is built.
 
-     Both are held in refs as well as props because the effect that builds the
-     map must not list them as dependencies. A dependency there means a new
-     canvas, new tiles and a new everything on every toggle, to move a camera.
-     The callback needs the same treatment for the opposite reason: handlers
-     registered once would otherwise close over the first render's copy. */
+     Held in refs as well as props because the effect that builds the map must
+     not list them as dependencies. A dependency there means a new canvas, new
+     tiles and a new everything on every click, to move a camera. The callback
+     needs the same treatment for the opposite reason: handlers registered
+     once would otherwise close over the first render's copy of it. */
   useEffect(() => {
     marketRef.current = market;
+    cityRef.current = city;
     pickRef.current = onPickCity;
   });
 
@@ -202,14 +268,18 @@ export function CinemaMap({
        box. The horizon is the only light in the picture. */
     const space = colour(css.getPropertyValue("--color-bg"), "#0d0e12");
     const horizon = colour(css.getPropertyValue("--color-n400"), "#2c2f3a");
+    /* The country lift is grey, not accent. Two oranges on one screen means
+       the country competes with its own cinemas, and the data wins that
+       argument every time: the pins are what you are looking for, the country
+       is only where they are. The accent survives on the outline alone. */
+    const lift = colour(css.getPropertyValue("--color-n500"), "#7e8391");
 
     const countries = countriesUrl(MAPTILER_KEY);
 
     const map = new MapLibreMap({
       container: holder.current,
       style: styleUrl(MAPTILER_KEY),
-      center: CAMERA[marketRef.current].center,
-      zoom: CAMERA[marketRef.current].zoom,
+      ...PLANET,
       attributionControl: { compact: true },
       /* The map fills a hero the page scrolls past, so the wheel belongs to
          the page: zoom needs ctrl, and touch needs two fingers. Dragging still
@@ -220,7 +290,7 @@ export function CinemaMap({
 
     mapRef.current = map;
 
-        map.on("style.load", () => {
+    map.on("style.load", () => {
       map.setProjection({ type: "globe" });
 
       map.setSky({
@@ -244,8 +314,7 @@ export function CinemaMap({
          Done by type rather than by name: this is MapTiler's style, their
          layer ids are theirs to rename, and "every symbol layer" is a claim
          that stays true across their releases. It runs in style.load, so the
-         only layers in the style are theirs. Ours are added in load, after,
-         and are not touched. */
+         only layers in the style are theirs. */
       for (const layer of map.getStyle().layers) {
         if (layer.type !== "symbol") continue;
         map.setLayerZoomRange(
@@ -262,10 +331,7 @@ export function CinemaMap({
          the wash fades out on the way down.
 
          level 0 is the country itself. Without that filter this paints every
-         state and district on top of its own country.
-
-         maxzoom rather than only an opacity of zero: an invisible layer still
-         costs tile requests and geometry parsing. */
+         state and district on top of its own country. */
       map.addLayer({
         id: "country-mask",
         type: "fill",
@@ -279,9 +345,6 @@ export function CinemaMap({
         ],
         paint: {
           "fill-color": space,
-          /* Flat until past the hero's own zoom, then away. An interpolation
-             that starts fading at the zoom the page opens at means the design
-             is never seen at full strength by anybody. */
           "fill-opacity": ["interpolate", ["linear"], ["zoom"], 3.2, 0.88, 6.5, 0],
         },
       });
@@ -298,15 +361,15 @@ export function CinemaMap({
           ["match", ["get", "iso_a2"], ["GB", "IN"], true, false],
         ],
         paint: {
-          "fill-color": accent,
-          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 3.2, 0.34, 7, 0],
+          "fill-color": lift,
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 3.2, 0.2, 7, 0],
         },
       });
 
-      
-      /* The outline is what makes Britain legible. At planet scale the island
-         is a few pixels across and a third-strength fill of it is nothing;
-         the stroke is what says there is a country there. */
+      /* The outline is what makes Britain legible, and now it is the only
+         accent on the country: at planet scale the island is a few pixels
+         across and a grey fill of it is nothing, so the stroke is what says
+         there is a country there. */
       map.addLayer({
         id: "country-outline",
         type: "line",
@@ -325,17 +388,15 @@ export function CinemaMap({
         },
       });
 
-            /* A wash of the page background that arrives as the basemap brightens.
+      /* A wash of the page background that arrives as the basemap brightens.
 
          dataviz-dark is nearly black at planet scale and pale grey at street
-         scale, which is correct for a map and wrong for a hero: flying into a
-         city turned the whole right of the page white. This is the inverse of
-         the country mask. That one fades out on the way down; this one fades
-         in, so the hero stays in the site's palette at every altitude.
-
-         A background layer covers the viewport rather than any geometry, and
-         it sits here, above MapTiler's layers and below the pins that load
-         adds afterwards, so the dots and labels stay at full strength. */
+         scale, which is correct for a map and wrong for a hero. This is the
+         inverse of the country mask: that one fades out on the way down, this
+         one fades in, so the hero stays in the site's palette at every
+         altitude. A background layer covers the viewport rather than any
+         geometry, and it sits above MapTiler's layers and below the pins that
+         load adds afterwards. */
       map.addLayer({
         id: "basemap-dim",
         type: "background",
@@ -345,33 +406,49 @@ export function CinemaMap({
         },
       });
     });
+
+    /* The pulse, cancelled on teardown. Declared out here so the cleanup
+       below can reach it whether or not load ever fired. */
+    let pulseFrame = 0;
+
     map.on("load", () => {
       map.addSource("cities", {
         type: "geojson",
         data: citiesFor(cinemas, marketRef.current),
       });
 
-      /* No clustering on this one any more. The city source is the grouping. */
       map.addSource("cinemas", {
         type: "geojson",
         data: featuresFor(cinemas, marketRef.current),
       });
 
-            /* Registered before the layer that asks for it. An image added later
-         also works, since MapLibre re-resolves missing images, but a symbol
-         layer whose icon arrives late flickers on first paint. */
       const chip = chipImage("rgba(13, 14, 18, 0.88)", horizon);
       if (chip && !map.hasImage("label-chip")) {
         map.addImage("label-chip", chip, {
           pixelRatio: 2,
           /* Only the middle eight pixels of each axis stretch, so the corner
-             radius and the border are identical on Agra and on Visakhapatnam.
-             content is the box the text is fitted into. */
+             radius and the border are identical on Agra and on
+             Visakhapatnam. content is the box the text is fitted into. */
           stretchX: [[20, 28]],
           stretchY: [[20, 28]],
           content: [4, 4, 44, 44],
         });
       }
+
+      /* The breathing ring under each city pin. Its radius and opacity are
+         driven from the animation loop below rather than from an expression,
+         because the style spec has no notion of time. */
+      map.addLayer({
+        id: "city-glow",
+        type: "circle",
+        source: "cities",
+        maxzoom: PIN_HANDOVER,
+        paint: {
+          "circle-color": accent,
+          "circle-radius": 8,
+          "circle-opacity": 0.3,
+        },
+      });
 
       map.addLayer({
         id: "city-dot",
@@ -381,8 +458,6 @@ export function CinemaMap({
         paint: {
           "circle-color": accent,
           "circle-radius": ["step", ["get", "count"], 5, 4, 7, 12, 9],
-          /* The glow is the stroke, not a shadow: a wide stroke in the accent
-             at low alpha, which is what the board's box-shadow was drawing. */
           "circle-stroke-width": 5,
           "circle-stroke-color": glow,
         },
@@ -402,14 +477,11 @@ export function CinemaMap({
           "text-size": 12,
           "icon-image": "label-chip",
           "icon-text-fit": "both",
-          /* Top, right, bottom, left, in CSS pixels, on top of content. */
           "icon-text-fit-padding": [2, 7, 2, 7],
-          /* The board places each label left or right of its dot by hand, on
-             a picture that never moves. MapLibre does it itself and keeps
-             doing it while the planet turns: it tries the anchors in order,
-             and where none fits it drops the label rather than overlapping
-             one. Labels that collide are the whole difference between a map
-             of thirty cities looking designed and looking broken. */
+          /* MapLibre tries these anchors in order and drops a label where
+             none fits rather than overlapping one. Labels that collide are
+             the whole difference between thirty cities looking designed and
+             looking broken. */
           "text-variable-anchor": ["left", "right", "top", "bottom"],
           "text-radial-offset": 1,
           "text-justify": "auto",
@@ -417,16 +489,13 @@ export function CinemaMap({
         },
         paint: {
           "text-color": ink,
-          /* Kept thin. The chip does the work; this is what holds the text
-             together if the canvas ever fails and the chip does not arrive. */
           "text-halo-color": space,
           "text-halo-width": 1,
         },
       });
+
       /* The same handover zoom from the other side, so there is exactly one
-         answer at every zoom level and no band where both or neither show.
-         This is the layer that draws a cinema once you are close enough that
-         a city is no longer a useful unit. */
+         answer at every zoom level and no band where both or neither show. */
       map.addLayer({
         id: "cinema",
         type: "circle",
@@ -440,17 +509,38 @@ export function CinemaMap({
         },
       });
 
-      /* Covers the race where the viewer toggles country before the style has
-         finished loading. A jump rather than a fly, because the map has only
-         just appeared and there is nothing to fly from. */
-      map.jumpTo(CAMERA[marketRef.current]);
+      /* Each frame sets two paint properties, which forces a repaint, which
+         is the point. Two things keep that honest: it stops entirely once the
+         city pins are not on screen, and it never starts for a viewer whose
+         system asks for reduced motion. An animation nobody can see is just a
+         drain on a laptop battery. */
+      const stillMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      if (!stillMotion) {
+        const pulse = () => {
+          if (map.getLayer("city-glow") && map.getZoom() < PIN_HANDOVER) {
+            const t = (performance.now() % PULSE_MS) / PULSE_MS;
+            map.setPaintProperty("city-glow", "circle-radius", 9 + t * 18);
+            map.setPaintProperty("city-glow", "circle-opacity", 0.32 * (1 - t));
+          }
+          pulseFrame = requestAnimationFrame(pulse);
+        };
+        pulseFrame = requestAnimationFrame(pulse);
+      }
+
+      /* Covers the race where the viewer picks a country before the style has
+         finished loading. Not animated: the map has only just appeared and
+         there is nothing to fly from. */
+      frameCamera(map, cinemas, marketRef.current, cityRef.current, false);
       readyRef.current = true;
     });
 
     /* A pin reports the pick and moves nothing. The camera is driven by state
        in one place, so a city chosen on the globe and a city chosen from a
-       chip take exactly the same path. Two code paths flying the same camera
-       is how you get a map that fights itself. */
+       chip take exactly the same path. Two code paths flying one camera is
+       how you get a map that fights itself. */
     for (const layer of ["city-dot", "city-label"]) {
       map.on("click", layer, (event) => {
         const name = event.features?.[0]?.properties?.name;
@@ -458,14 +548,35 @@ export function CinemaMap({
       });
     }
 
-    /* A popup, not a navigation. On a map a click that leaves the page feels
-       like a trap, so the cinema gets named and the viewer decides. */
+    /* A popup, not a navigation, and a camera move as well.
+
+       The popup decision stands: on a map, a click that leaves the page feels
+       like a trap, so the cinema gets named and the viewer decides. The flyTo
+       completes the journey the wave set out to make, planet to street with
+       no seam in it.
+
+       flyTo first and popup second, deliberately: a popup is anchored to a
+       coordinate rather than to the screen, so it rides the animation down
+       and the thing you clicked stays named the whole way. */
     map.on("click", "cinema", (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
 
+      const at = (feature.geometry as Point).coordinates as [number, number];
+
+      map.flyTo({
+        center: at,
+        /* Never zoom out. Clicking a dot you are already on top of should not
+           throw you backwards. */
+        zoom: Math.max(map.getZoom(), STREET_ZOOM),
+        /* The target sits below the middle of the canvas so the popup, which
+           opens upwards, has somewhere to be. */
+        offset: [0, 70],
+        duration: 2200,
+      });
+
       new Popup({ offset: 12, closeButton: false })
-        .setLngLat((feature.geometry as Point).coordinates as [number, number])
+        .setLngLat(at)
         .setDOMContent(
           popupContent(
             feature.properties as {
@@ -490,6 +601,7 @@ export function CinemaMap({
     }
 
     return () => {
+      cancelAnimationFrame(pulseFrame);
       readyRef.current = false;
       mapRef.current = null;
       map.remove();
@@ -499,13 +611,7 @@ export function CinemaMap({
   /* Props changed, so the live map is updated in place: new data into the
      existing sources, and one camera move. Nothing is rebuilt.
 
-     No essential: true on the flyTo. A viewer who has asked their system for
-     reduced motion gets a jump instead of a journey, which MapLibre does on
-     its own as long as the animation is not declared essential. */
-    /* Props changed, so the live map is updated in place: new data into the
-     existing sources, and one camera move. Nothing is rebuilt.
-
-     No essential: true on either camera call. A viewer who has asked their
+     No essential: true on any camera call. A viewer who has asked their
      system for reduced motion gets a jump instead of a journey, which
      MapLibre does on its own as long as the animation is not declared
      essential. */
@@ -513,42 +619,16 @@ export function CinemaMap({
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
 
-    const cities = citiesFor(cinemas, market);
-    (map.getSource("cities") as GeoJSONSource | undefined)?.setData(cities);
+    (map.getSource("cities") as GeoJSONSource | undefined)?.setData(
+      citiesFor(cinemas, market),
+    );
     (map.getSource("cinemas") as GeoJSONSource | undefined)?.setData(
       featuresFor(cinemas, market),
     );
 
-    if (city) {
-      /* Fitted to the city's own cinemas rather than flown to a fixed zoom.
-         Mumbai's nineteen are spread across forty kilometres and Ludhiana's
-         two share a street: one number cannot frame both, and the bounds are
-         derived from the same rows the list below is built from, so the globe
-         and the list cannot disagree about where a city is.
-
-         The padding is asymmetric because the container is deliberately wider
-         than what you can see: the left of it is under the panel, so the city
-         is pushed clear of the heading rather than landing behind it. */
-      const bounds = new LngLatBounds();
-      for (const cinema of cinemas) {
-        if (marketOf(cinema) !== market || cinema.city !== city) continue;
-        bounds.extend([cinema.longitude, cinema.latitude]);
-      }
-
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, {
-          padding: { left: 320, right: 140, top: 100, bottom: 100 },
-          /* A city with one cinema has bounds of zero size, which fits at
-             infinite zoom. This is where that stops. */
-          maxZoom: 11,
-          duration: 2600,
-        });
-        return;
-      }
-    }
-
-    map.flyTo({ ...CAMERA[market], duration: 2400 });
+    frameCamera(map, cinemas, market, city, true);
   }, [cinemas, market, city]);
+
   /* No key, no map, and the page is untouched. Someone cloning this repo with
      no MapTiler account gets a working hero rather than a broken one. */
   if (!MAPTILER_KEY) return null;

@@ -310,3 +310,13 @@
     font-size: 40px;
   }
 }
+/* Only appears when the page is showing both countries at once. Sits above a
+   run of city sections rather than inside one. */
+.countryTitle {
+  margin: 48px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}

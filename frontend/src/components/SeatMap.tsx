@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 
 import styles from "@/css/SeatMap.module.css";
 import type { Seat as SeatType, Tier } from "@/types/api";
+import { money } from "@/utils/format";
 import { TIERS } from "@/utils/seatTiers";
 
 import { Seat } from "./Seat";
@@ -283,9 +284,7 @@ export function SeatMap({
                       style={{ ["--tier-color" as string]: TIERS[tier].cssVar }}
                     >
                       <span className={styles.aisleRule} />
-                      <span className={styles.aisleLabel}>
-                        {(rowSeats[0]?.tierName ?? TIERS[tier].label).toUpperCase()}
-                      </span>
+                                           <span className={styles.aisleLabel}>{bandLabel(seats, tier)}</span>
                       <span className={styles.aisleRule} />
                     </div>
                   )}
@@ -457,4 +456,41 @@ function ViewButton({
       {children}
     </button>
   );
+}
+/* "NORMAL · ₹200", in the cross-aisle that opens each tier.
+
+   The price is already in the payload. Seat.priceMinor is post-rules, so this
+   is what the seat costs right now, not the listed base, and no endpoint and
+   no field had to be added to show it. That is the point worth making about
+   it: a view that needed nothing from the API is a view the API was designed
+   for rather than grown into.
+
+   Not inside the seat squares. In fit view a seat is about 26px across and a
+   price in one is unreadable; in zoom view it would fit, which would mean the
+   same seat showing different information depending on how far in you are.
+
+   One figure per band is honest today, because the base price is per hall
+   class and tier while the rules are per screening, so every seat in a band
+   genuinely costs the same. The day a per-seat rule exists, one figure
+   becomes a headline price some of these seats cannot be bought at. So rather
+   than leaving a note for a future self to remember, the label checks: if the
+   seats in the band disagree it says "from" and shows the lowest, which is
+   the same thing the showtimes listing already does with its from-price. The
+   label cannot start lying, whatever the pricing rules do next. */
+function bandLabel(seats: SeatType[], tier: Tier): string {
+  const inBand = seats.filter((seat) => seat.tier === tier);
+  const first = inBand[0];
+  if (!first) return TIERS[tier].label.toUpperCase();
+
+  /* tierName is the server's display label, so the code-to-text mapping lives
+     in one place. TIERS is the fallback for a seat list that has none. */
+  const name = (first.tierName || TIERS[tier].label).toUpperCase();
+
+  const lowest = inBand.reduce(
+    (low, seat) => Math.min(low, seat.priceMinor),
+    first.priceMinor,
+  );
+  const varies = inBand.some((seat) => seat.priceMinor !== lowest);
+
+  return `${name} · ${varies ? "from " : ""}${money(lowest, first.currency)}`;
 }
