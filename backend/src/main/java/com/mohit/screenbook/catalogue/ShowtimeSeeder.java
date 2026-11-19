@@ -16,7 +16,8 @@ import java.util.stream.Collectors;
  * with a statement of the target state:
  *
  *   every screen has screenings for the next N days, at times local to its
- *   cinema, and none in the past
+ *   cinema, drawn only from films released in that cinema's country, and none
+ *   in the past
  *
  * and converges to it on every startup. Idempotency is not a feature added on
  * top, it falls out of describing a state rather than an action. The second run
@@ -40,10 +41,27 @@ public class ShowtimeSeeder {
        scheduled on Jaipur's clock and a Liverpool one on Liverpool's, and
        neither reads a server default or a global config value.
 
-             The film subquery is a ring. row_number gives each film a 0-based
-       position and count(*) OVER () gives the size, so "the next film" is
-       ring_pos mod total, a join rather than a lookup. It takes whatever films
-       exist, so the film count can change without touching this statement.
+       The film subquery is a ring, and as of V22 it is one ring per territory
+       rather than one ring for the world. row_number numbers the films
+       released in a country from zero, count(*) gives that country's total,
+       and "the next film" is ring_pos mod total inside GB or inside IN and
+       never across the two. Both windows carry the same PARTITION BY, which
+       is the whole mechanism: partitioning restarts the numbering at every
+       new region and scopes the count to that region's rows. Without it,
+       row_number would run 0..66 across both countries and count(*) would
+       return 67 everywhere, which is exactly the bug this replaces.
+
+       The join is region first and modulo second. f.total is per territory
+       now, so the modulo only means anything once both sides agree which
+       country they are talking about. c.country comes from the cinema, which
+       is the fact V22 added; before it there was nothing on the row to join
+       on, which is why this query could not have been written in wave 5.
+
+       film is not joined at all. film_region.film_id is everything the insert
+       needs, and the foreign key already guarantees it points at a real film,
+       so joining film would read a table to prove something a constraint
+       proves for free. ORDER BY fr.film_id gives the same stable order the
+       old ORDER BY id did.
 
        The ring position is the screen and the day, and deliberately not the
        slot. A screen runs one film across all four of its daily slots, which
@@ -54,9 +72,11 @@ public class ShowtimeSeeder {
        collides, so every slot got a different film and a four-screen cinema
        advertised sixteen films a day with one screening each.
 
-       With no films at all the subquery has no
-       rows, so the join produces nothing and the modulo is never evaluated.
-       No division by zero to guard.
+       A country with no film_region rows gets no partition, so the join finds
+       nothing and that country's screens are left alone. That is the same
+       shape as the old "no films at all" case: the modulo is never evaluated
+       against a zero, because a partition only exists if it has rows in it.
+       No division by zero to guard, and no special case to write.
 
        The stagger exists so that not every screen in the country starts at
        exactly 10:30. It is a function of the screen id, so it is stable: the
@@ -72,9 +92,10 @@ public class ShowtimeSeeder {
        for parameters is a bad place to also use : as a cast. */
     private static final String INSERT = """
             INSERT INTO showtime (film_id, screen_id, starts_at)
-            SELECT f.id, c.screen_id, c.starts_at
+            SELECT f.film_id, c.screen_id, c.starts_at
             FROM (
-                    SELECT sc.id AS screen_id,
+                    SELECT sc.id      AS screen_id,
+                           ci.country AS country,
 
                            (CAST(now() AT TIME ZONE ci.timezone AS date)
                                 + d.n
@@ -82,20 +103,23 @@ public class ShowtimeSeeder {
                                 + (sc.id % 4) * interval '5 minutes')
                              AT TIME ZONE ci.timezone        AS starts_at,
 
-                           sc.id + d.n           AS ring_pos
+                           sc.id + d.n                       AS ring_pos
 
                     FROM screen sc
                     JOIN cinema ci ON ci.id = sc.cinema_id
                     CROSS JOIN generate_series(0, :lastDay) AS d(n)
-                                       CROSS JOIN unnest(CAST(string_to_array(:slots, ',') AS time[]))
-                                                                                                       AS slot(time_of_day)
+                    CROSS JOIN unnest(CAST(string_to_array(:slots, ',') AS time[]))
+                                                            AS slot(time_of_day)
                  ) c
             JOIN (
-                    SELECT id,
-                           row_number() OVER (ORDER BY id) - 1 AS n,
-                           count(*)     OVER ()                AS total
-                    FROM film
-                 ) f ON f.n = c.ring_pos % f.total
+                    SELECT fr.region,
+                           fr.film_id,
+                           row_number() OVER (PARTITION BY fr.region
+                                              ORDER BY fr.film_id) - 1 AS n,
+                           count(*)     OVER (PARTITION BY fr.region)  AS total
+                    FROM film_region fr
+                 ) f ON  f.region = c.country
+                     AND f.n      = c.ring_pos % f.total
             WHERE c.starts_at > now()
             ON CONFLICT (screen_id, starts_at) DO NOTHING
             """;

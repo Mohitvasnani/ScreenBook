@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
-
+import java.util.List;
 import java.time.LocalTime;
 import java.util.stream.Collectors;
 
@@ -123,6 +123,78 @@ class ShowtimeSeederTest {
 
         assertEquals(0, offSchedule,
                 "screenings landed at a local time that is not one of the configured slots");
+    }
+
+    /**
+     * The wave 7 rule, and the only test that distinguishes the partitioned
+     * ring from the global one it replaced.
+     *
+     * Scoped to rows this run created, because V4 and V13 inserted showtimes
+     * against the three invented films long before film_region existed. Those
+     * rows have no territory and would fail this honestly, which is a fact
+     * about applied history rather than about the seeder.
+     *
+     * The inserted() guard is not decoration. Without it this test passes
+     * perfectly on a seeder that inserts nothing at all, which is exactly the
+     * failure mode an empty film_region would produce.
+     */
+    @Test
+    @DisplayName("no cinema schedules a film with no release in its own country")
+    void schedulesOnlyLocalReleases() {
+        long before = highestShowtimeId();
+
+        ShowtimeSeeder.Result result = seeder.seed();
+
+        assertTrue(result.inserted() > 0,
+                "nothing was seeded, so this proves nothing");
+
+        long foreign = jdbc.sql("""
+                        SELECT count(*)
+                        FROM showtime st
+                        JOIN screen sc ON sc.id = st.screen_id
+                        JOIN cinema ci ON ci.id = sc.cinema_id
+                        WHERE st.id > :before
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM film_region fr
+                              WHERE fr.film_id = st.film_id
+                                AND fr.region  = ci.country
+                          )
+                        """)
+                .param("before", before)
+                .query(Long.class)
+                .single();
+
+        assertEquals(0, foreign,
+                "a cinema scheduled a film with no release in its country");
+    }
+
+    /**
+     * Guards the test above from passing because one market is empty. If IN
+     * had no film_region rows, every Indian screen would seed nothing, no
+     * foreign screening could exist, and the rule would look satisfied.
+     */
+    @Test
+    @DisplayName("both markets get screenings")
+    void seedsBothMarkets() {
+        long before = highestShowtimeId();
+
+        seeder.seed();
+
+        List<String> countries = jdbc.sql("""
+                        SELECT DISTINCT ci.country
+                        FROM showtime st
+                        JOIN screen sc ON sc.id = st.screen_id
+                        JOIN cinema ci ON ci.id = sc.cinema_id
+                        WHERE st.id > :before
+                        ORDER BY ci.country
+                        """)
+                .param("before", before)
+                .query(String.class)
+                .list();
+
+        assertEquals(List.of("GB", "IN"), countries,
+                "one of the two markets seeded nothing");
     }
 
     private long highestShowtimeId() {
