@@ -2,19 +2,17 @@ import type { Cinema } from "@/types/api";
 
 /* The two markets the dataset covers.
 
-   Country is not on the cinema contract yet. V22 adds cinema.country in wave
-   7 and marketOf becomes one field read. Until then the currency is the
-   honest proxy, because currency is already a property of the building for
-   exactly the same reason the country is. */
-export type Market = "GB" | "IN";
+   Market is the cinema's own country field rather than a union declared here,
+   so the two cannot drift: a third market is a change to the API contract and
+   this follows it automatically. V22 adding cinema.country is what deleted
+   marketOf, which existed only because the currency was the closest thing to
+   a country the contract carried. */
+export type Market = Cinema["country"];
 
 export const MARKETS: { id: Market; label: string; inSentence: string }[] = [
   { id: "IN", label: "India", inSentence: "India" },
   { id: "GB", label: "United Kingdom", inSentence: "the UK" },
 ];
-
-export const marketOf = (cinema: Cinema): Market =>
-  cinema.currency === "GBP" ? "GB" : "IN";
 
 /* The opening shot, and the only fixed camera left in the project. Everything
    else is a fit to the thing being talked about, so there is nothing else to

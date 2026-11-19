@@ -194,6 +194,11 @@
      name: cinema.name,
      city: cinema.city,
      state: cinema.state,
+          /* Derived here rather than added to all ten rows, because this file stands
+        in for V18 and V22 together, and V22's backfill derives country from
+        state with exactly this test. The server reads a column; the mock
+        computes what the migration computed. */
+     country: cinema.state === "England" || cinema.state === "Scotland" ? "GB" : "IN",
      latitude: cinema.latitude,
      longitude: cinema.longitude,
      currency: cinema.currency,

@@ -33,6 +33,10 @@
         name: string;
         city: string;
         state: string;
+                /* GB or IN. Where the building is, which is not the same question as
+           what it charges in, even though the two agree today. V22 made it a
+           column; before that the client inferred it from the currency. */
+        country: "GB" | "IN";
         latitude: number;
         longitude: number;
         /* ISO 4217, and the cinema's, not the customer's. Nothing in this system

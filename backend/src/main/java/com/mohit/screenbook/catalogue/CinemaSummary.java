@@ -18,6 +18,7 @@ public record CinemaSummary(
         String name,
         String city,
         String state,
+        String country,
         double latitude,
         double longitude,
         String currency,

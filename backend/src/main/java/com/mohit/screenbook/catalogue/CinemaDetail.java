@@ -17,6 +17,7 @@ public record CinemaDetail(
         String name,
         String city,
         String state,
+        String country,
         String address,
         double latitude,
         double longitude,

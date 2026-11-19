@@ -45,6 +45,7 @@ public class CinemaQuery {
                    ci.name                     AS name,
                    ci.city                     AS city,
                    ci.state                    AS state,
+                                      ci.country                  AS country,
                    ST_Y(ci.location::geometry)  AS latitude,
                    ST_X(ci.location::geometry)  AS longitude,
                    ci.currency                 AS currency,
@@ -87,6 +88,7 @@ public class CinemaQuery {
                    ci.name                     AS name,
                    ci.city                     AS city,
                    ci.state                    AS state,
+                   ci.country                  as country,
                    ST_Y(ci.location::geometry)  AS latitude,
                    ST_X(ci.location::geometry)  AS longitude,
                    ci.currency                 AS currency,
@@ -102,12 +104,57 @@ public class CinemaQuery {
             LIMIT :limit
             """;
 
+    /* Every cinema within a radius, nearest first.
+
+   ST_DWithin rather than a WHERE on ST_Distance. The two return the same
+   rows, but ST_DWithin is index-aware: it rewrites into a bounding box the
+   GiST index can answer and checks the true distance only on what survives.
+   A WHERE on ST_Distance computes a real distance for every cinema and
+   filters afterwards, which is a sequential scan wearing a radius.
+
+   The fourth argument is use_spheroid and false is deliberate. It defaults
+   to true, and NEAREST already passes false to ST_Distance so its numbers
+   agree with the <-> ordering. Left at the default here, the boundary would
+   be drawn on a spheroid while the distance printed beside it was measured
+   on a sphere. They differ by about 0.3 percent, so about five metres at
+   1.5km, and a cinema sitting on the line would appear in the list with a
+   distance larger than the radius it was found by.
+
+   The origin is written out three times rather than once in a CTE, for the
+   reason NEAREST gives: the KNN operand has to be built from parameters or
+   the index scan is lost. */
+    private static final String WITHIN = """
+            SELECT ci.id                        AS id,
+                   ci.name                      AS name,
+                   ci.city                      AS city,
+                   ci.state                     AS state,
+                   ci.country                   AS country,
+                   ST_Y(ci.location::geometry)  AS latitude,
+                   ST_X(ci.location::geometry)  AS longitude,
+                   ci.currency                  AS currency,
+                   count(sc.id)                 AS screen_count,
+                   ST_Distance(
+                       ci.location,
+                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                       false)                   AS distance_metres
+            FROM cinema ci
+            LEFT JOIN screen sc ON sc.cinema_id = ci.id
+            WHERE ST_DWithin(
+                      ci.location,
+                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                      :metres,
+                      false)
+            GROUP BY ci.id
+            ORDER BY ci.location <-> ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography
+            """;
+
     private static final String DETAIL = """
             SELECT ci.id                       AS id,
                    ci.name                     AS name,
                    ci.city                     AS city,
                    ci.state                    AS state,
-                   ci.address                  AS address,
+                   ci.country                  AS country,
+                   ci.address                  AS address,                                     
                    ST_Y(ci.location::geometry)  AS latitude,
                    ST_X(ci.location::geometry)  AS longitude,
                    ci.currency                 AS currency,
@@ -138,16 +185,16 @@ public class CinemaQuery {
                 .param("lat", lat)
                 .param("lon", lon)
                 .param("limit", limit)
-                .query((rs, rowNum) -> new NearestCinema(
-                        rs.getLong("id"),
-                        rs.getString("name"),
-                        rs.getString("city"),
-                        rs.getString("state"),
-                        rs.getDouble("latitude"),
-                        rs.getDouble("longitude"),
-                        rs.getString("currency"),
-                        rs.getInt("screen_count"),
-                        (int) Math.round(rs.getDouble("distance_metres"))))
+                .query((rs, rowNum) -> toNearest(rs))
+                .list();
+    }
+    @Transactional(readOnly = true)
+    public List<NearestCinema> within(double lat, double lon, int metres) {
+        return jdbc.sql(WITHIN)
+                .param("lat", lat)
+                .param("lon", lon)
+                .param("metres", metres)
+                .query((rs, rowNum) -> toNearest(rs))
                 .list();
     }
 
@@ -165,6 +212,7 @@ public class CinemaQuery {
                         rs.getString("name"),
                         rs.getString("city"),
                         rs.getString("state"),
+                        rs.getString("country"),
                         rs.getString("address"),
                         rs.getDouble("latitude"),
                         rs.getDouble("longitude"),
@@ -182,9 +230,23 @@ public class CinemaQuery {
                 rs.getString("name"),
                 rs.getString("city"),
                 rs.getString("state"),
+                rs.getString("country"),
                 rs.getDouble("latitude"),
                 rs.getDouble("longitude"),
                 rs.getString("currency"),
                 rs.getInt("screen_count"));
+    }
+    private static NearestCinema toNearest(ResultSet rs) throws SQLException {
+        return new NearestCinema(
+                rs.getLong("id"),
+                rs.getString("name"),
+                rs.getString("city"),
+                rs.getString("state"),
+                rs.getString("country"),
+                rs.getDouble("latitude"),
+                rs.getDouble("longitude"),
+                rs.getString("currency"),
+                rs.getInt("screen_count"),
+                (int) Math.round(rs.getDouble("distance_metres")));
     }
 }

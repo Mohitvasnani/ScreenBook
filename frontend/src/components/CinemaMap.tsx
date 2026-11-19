@@ -16,7 +16,7 @@ import {
   GROUND_BEARING,
   GROUND_PITCH,
   PLANET,
-  marketOf,
+  
   type Market,
 } from "@/utils/markets";
 
@@ -70,7 +70,7 @@ const colour = (value: string, fallback: string) =>
 /* A null market means no country has been chosen, which is the opening state
    and shows everything. One predicate so that rule is stated once. */
 const inMarket = (cinema: Cinema, market: Market | null) =>
-  market === null || marketOf(cinema) === market;
+  market === null || cinema.country === market;
 
 /* The board draws each city label as a dark chip with a one pixel border.
    MapLibre has no "background" property for a label, but it can fit an icon

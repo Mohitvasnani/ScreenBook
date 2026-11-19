@@ -11,7 +11,7 @@ import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
 import type { Cinema, NearestCinema } from "@/types/api";
 import { distance } from "@/utils/format";
-import { MARKETS, marketOf, type Market } from "@/utils/markets";
+import { MARKETS,  type Market } from "@/utils/markets";
 
 /* Loaded only when this screen renders, for two reasons that happen to have
    one fix. MapLibre is around three quarters of a megabyte, and importing it
@@ -21,6 +21,7 @@ const CinemaMap = dynamic(
   () => import("@/components/CinemaMap").then((m) => m.CinemaMap),
   { ssr: false, loading: () => null },
 );
+
 
 /* Five, plus All cities. A chip is a shortcut, and a page full of shortcuts
    is a list. */
@@ -125,13 +126,13 @@ export function CinemasScreen() {
     setCity(name);
     if (market === null) {
       const found = (data ?? []).find((cinema) => cinema.city === name);
-      if (found) setMarket(marketOf(found));
+      if (found) setMarket(found.country);
     }
   }
 
   const inMarket = useMemo(
-    () => (data ?? []).filter((cinema) => market === null || marketOf(cinema) === market),
-    [data, market],
+   ()=> (data ?? []).filter((cinema) => market === null || cinema.country === market),
+   [data, market],
   );
 
   /* The cities with the most cinemas, not the first five alphabetically. A
@@ -158,7 +159,7 @@ export function CinemasScreen() {
     (id) => ({
       id,
       label: MARKETS.find((m) => m.id === id)?.label ?? "",
-      cities: groupByCity(visible.filter((cinema) => marketOf(cinema) === id)),
+      cities: groupByCity(visible.filter((cinema) => cinema.country === id)),
     }),
   );
 
