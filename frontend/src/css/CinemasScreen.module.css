@@ -1,133 +1,312 @@
+/* Built to the globe homepage board, with three deliberate departures: the
+   hero is full bleed rather than capped at the page width, it has no border
+   under it, and the canvas is inset past the crop on three sides. The board
+   is a fixed canvas and could draw a 900 by 520 picture; a live map in a box
+   that size reads as a widget sitting on the page. */
+
+.hero {
+  position: relative;
+  width: 100%;
+  min-height: clamp(540px, 66vh, 660px);
+  overflow: hidden;
+}
+
+/* Deliberately larger than its crop on the top, bottom and right. The canvas
+   has edges; the hero makes sure none of them are on screen. The planet
+   overhangs the right of the viewport, which is the one thing a static
+   mockup cannot show you. */
+.globe {
+  position: absolute;
+  top: -90px;
+  bottom: -90px;
+  right: -20vw;
+  width: min(1400px, 100vw);
+}
+
+/* What lets 48px type sit over a map and stay readable. Ends in the
+   background colour at zero alpha, not in the keyword transparent: that
+   keyword is transparent black, and interpolating to it puts a grey bruise
+   through the middle of the fade. */
+.scrim {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(820px, 64%);
+  background: linear-gradient(90deg, var(--color-bg) 40%, rgba(13, 14, 18, 0) 100%);
+  pointer-events: none;
+}
+
+/* The planet dissolves into the page instead of being cut off by a line. This
+   is most of the difference between a hero and a widget. */
+.fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 160px;
+  background: linear-gradient(180deg, rgba(13, 14, 18, 0) 0%, var(--color-bg) 92%);
+  pointer-events: none;
+}
+
+/* Capped at the shared page width so the eyebrow lines up with the wordmark
+   in the header, with the column of text capped much narrower inside it. */
+.panel {
+  position: relative;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 76px 24px 64px;
+}
+
+.panelInner {
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.eyebrow {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.title {
+  font-size: 48px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--color-n700);
+}
+
+/* A segmented control: one container, two buttons, the active one inverted.
+   align-self keeps it the width of its contents inside a stretching column. */
+.toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-n400);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--color-n700);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segment:hover {
+  color: var(--color-ink);
+}
+
+.segmentOn,
+.segmentOn:hover {
+  background: var(--color-ink);
+  color: var(--color-bg);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Translucent, because these sit over a planet. A solid fill would be a row
+   of tiles pasted on top of the hero. */
+.chip {
+  padding: 8px 14px;
+  border: 1px solid var(--color-n400);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 75%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--color-n700);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--color-ink);
+}
+
+/* After .chipAll in the file, so a selected All cities wins over the muted
+   rule rather than depending on the order the classes are written in JSX. */
+.chipAll {
+  color: var(--color-n500);
+}
+
+.chipOn,
+.chipOn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-tint);
+  color: var(--color-accent-deep);
+}
+
+.locate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* A text button, not a bordered one. The toggle and the chips are the panel's
+   controls; a third bordered thing under them would compete with both. */
+.locateButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-deep);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.locateButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}
+
+.locateNote {
+  font-size: 13px;
+  color: var(--color-n700);
+}
+
+.note {
+  max-width: 380px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-n500);
+}
+
 .page {
-    max-width: 1040px;
-    margin: 0 auto;
-    padding: 40px 16px 64px;
-  }
-  
-  .title {
-    font-size: 46px;
-  }
-  
-  .subtitle {
-    margin-top: 8px;
-    font-style: italic;
-    color: var(--color-n700);
-  }
-  
-  .locate {
-    margin-top: 24px;
-  }
-  
-  .locateButton {
-    padding: 10px 16px;
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius);
-    background: var(--color-accent-tint);
-    color: var(--color-ink);
-    font-family: var(--font-body);
-    font-size: 14px;
-    cursor: pointer;
-  }
-  
-  .locateButton:hover:not(:disabled) {
-    background: var(--color-accent);
-    color: var(--color-bg);
-  }
-  
-  .locateButton:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-  
-  .locateNote {
-    margin-top: 10px;
-    font-size: 13px;
-    color: var(--color-n700);
-  }
-  
-  .group {
-    margin-top: 40px;
-    padding-top: 24px;
-    border-top: 1px solid var(--color-divider);
-  }
-  
-  .groupTitle {
-    font-size: 26px;
-  }
-  
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 8px 24px 64px;
+}
+
+.group {
+  padding: 32px 0 48px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.group:last-child {
+  border-bottom: 0;
+}
+
+.groupTitle {
+  margin-bottom: 24px;
+  font-size: 34px;
+}
+
+.cards {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 20px;
+  border: 1px solid var(--color-n400);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  text-decoration: none;
+  color: inherit;
+}
+
+.card:hover {
+  border-color: var(--color-line-strong);
+}
+
+.cardName {
+  font-family: var(--font-heading);
+  font-size: 27px;
+  line-height: 1.1;
+  color: var(--color-ink);
+}
+
+.cardMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  color: var(--color-n700);
+}
+
+/* The distance is the one number on this card worth reading precisely, so it
+   gets the accent rather than the muted text colour. */
+.badge {
+  padding: 2px 8px;
+  border: 1px solid var(--color-accent);
+  border-radius: 999px;
+  color: var(--color-accent-deep);
+  font-size: 12px;
+}
+
+.cardWhere {
+  font-size: 15px;
+  color: var(--color-n500);
+}
+
+.skeletons {
+  margin-top: 32px;
+  display: grid;
+  gap: 16px;
+}
+
+@media (min-width: 640px) {
   .cards {
-    margin-top: 16px;
-    padding: 0;
-    list-style: none;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 12px;
+    grid-template-columns: repeat(2, 1fr);
   }
-  
-  .card {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    padding: 16px;
-    border: 1px solid var(--color-divider);
-    border-radius: var(--radius);
-    text-decoration: none;
-    color: inherit;
+}
+
+@media (min-width: 1024px) {
+  .cards {
+    grid-template-columns: repeat(3, 1fr);
   }
-  
-  .card:hover {
-    background: var(--color-surface);
+}
+
+/* The board's own breakpoint. The globe is not hidden, it is pushed off to
+   the right and dropped in opacity, so it is atmosphere behind the type
+   rather than a competing object. */
+@media (max-width: 860px) {
+  .globe {
+    right: -42vw;
+    width: 140vw;
+    opacity: 0.4;
   }
-  
-  .cardName {
-    font-family: var(--font-heading);
-    font-size: 22px;
-    line-height: 1.1;
+
+  .panelInner {
+    max-width: none;
   }
-  
-  .cardMeta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-    font-size: 13px;
-    color: var(--color-n700);
+
+  .title {
+    font-size: 40px;
   }
-  
-  /* The distance is the one number on this card worth reading precisely, so it
-     gets the accent rather than the muted text colour. */
-  .badge {
-    padding: 2px 8px;
-    border: 1px solid var(--color-accent);
-    border-radius: 999px;
-    color: var(--color-accent-deep);
-    font-size: 12px;
-  }
-  
-  .cardWhere {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--color-n500);
-  }
-  
-  .skeletons {
-    margin-top: 32px;
-    display: grid;
-    gap: 16px;
-  }
-  
-  @media (min-width: 640px) {
-    .cards {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .title {
-      font-size: 60px;
-    }
-  }
-  
-  @media (min-width: 1024px) {
-    .cards {
-      grid-template-columns: repeat(3, 1fr);
-    }
-  }
+}

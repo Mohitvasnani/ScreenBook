@@ -56,6 +56,7 @@
 
   --radius: 10px;
   --radius-lg: 14px;
+  --page-max: 1260px;
    /* A seat seen from behind: squarer front edge toward the screen, rounded
      seat back nearest the viewer. */
   --radius-seat: 14% 14% 32% 32%;

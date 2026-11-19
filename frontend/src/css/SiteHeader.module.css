@@ -42,7 +42,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  max-width: 1040px;
+  max-width: var(--page-max);
   margin: 0 auto;
   padding: 14px 16px;
   transition: padding 160ms ease;
