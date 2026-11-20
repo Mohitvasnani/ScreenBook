@@ -90,6 +90,17 @@
         nearestOutside: NearestCinema | null;
       }
 
+      
+/* GET /api/cinemas/{cinemaId}/route.
+
+coordinates is longitude first, the order MapLibre wants. A 503 means no road
+route is available right now, and the straight line stays. */
+export interface CinemaRoute {
+  distanceMetres: number;
+  durationSeconds: number;
+  coordinates: [number, number][];
+}
+
       /* GET /api/cinemas/cities.
 
          What the globe draws below z8: one labelled pin per city rather than 976
@@ -189,6 +200,8 @@ export interface Pricing {
   baseMinor: number;
   /* What one seat actually costs. */
   adjustedMinor: number;
+
+  
   /* Only the rules that moved the price. Empty means the listed price stands,
      which the UI should render as one line, not an empty panel. */
   rules: PriceLine[];

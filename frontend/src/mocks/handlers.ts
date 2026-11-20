@@ -309,6 +309,22 @@
       return HttpResponse.json(body);
     }),
 
+    
+    /* Demo mode has no routing provider, so it answers the way the server does
+       when none is configured. The legend then shows its fallback message. */
+    http.get("/api/cinemas/:cinemaId/route", async ({ params }) => {
+      await delay(LATENCY_MS);
+      return problemResponse(
+        problem(
+          "routing-unavailable",
+          503,
+          "Routing unavailable",
+          "Routing is not configured.",
+          `/api/cinemas/${params.cinemaId}/route`,
+        ),
+      );
+    }),
+
         http.get("/api/cinemas/cities", async () => {
       await delay(LATENCY_MS);
       const body: CinemaCity[] = cities();

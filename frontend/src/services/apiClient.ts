@@ -18,6 +18,7 @@
      CinemaDetail,
      NearestCinema,
      CinemasWithin,
+     CinemaRoute,
      CinemaCity,
 
    } from "@/types/api";
@@ -199,6 +200,17 @@
           lat: String(lat),
           lon: String(lon),
           ...(metres === undefined ? {} : { metres: String(metres) }),
+        })}`,
+      ),
+
+      
+    /* Road geometry for one cinema. Called on a click only, never on a radius
+       change, because the provider's free tier is small. */
+    cinemaRoute: (cinemaId: number, lat: number, lon: number) =>
+      request<CinemaRoute>(
+        `/cinemas/${cinemaId}/route?${new URLSearchParams({
+          lat: String(lat),
+          lon: String(lon),
         })}`,
       ),
 

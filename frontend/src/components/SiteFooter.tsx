@@ -19,6 +19,7 @@ const GITHUB_URL = "https://github.com/mohitvasnani";
 const EMAIL = "mohitvasnani47@gmail.com";
 const OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright";
 const TMDB_URL = "https://www.themoviedb.org/";
+const ORS_URL = "https://openrouteservice.org/";
 
 export function SiteFooter() {
   return (
@@ -92,6 +93,10 @@ export function SiteFooter() {
           <p className={styles.fine}>
             Film data from <a href={TMDB_URL}>TMDB</a>. This product uses the
             TMDB API but is not endorsed or certified by TMDB.
+          </p>
+          
+          <p className={styles.fine}>
+            Road routes by <a href={ORS_URL}>openrouteservice</a>.
           </p>
         </div>
       </div>

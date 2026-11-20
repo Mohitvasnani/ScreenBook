@@ -6,6 +6,7 @@
    rows and seats. */
 import { GeoJSONSource, LngLatBounds, MapLibreMap, Popup, setWorkerUrl } from "maplibre-gl";
 
+
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
@@ -23,8 +24,12 @@ import {
   type Market,
 } from "@/utils/markets";
 
+
+import {ROUTE_COLOURS, routeFigure, type Route} from "@/utils/routes";
+
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { FeatureCollection, Point, Polygon } from "geojson";
+import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
+
 
 /* MapLibre derives its worker URL from import.meta.url and returns an empty
    string unless that is an http(s) URL. No bundler gives it one: webpack
@@ -226,6 +231,51 @@ function originFor(
   };
 }
 
+/* Where a route's label sits. A straight line has no vertex in the middle,
+   so it takes the midpoint. A road path takes its middle vertex, which is
+   on the road. */
+function middleOf(path: [number, number][]): [number, number] {
+  if (path.length === 2) {
+    return [(path[0][0] + path[1][0]) / 2, (path[0][1] + path[1][1]) / 2];
+  }
+  return path[Math.floor(path.length / 2)];
+}
+
+/* One line and one label point per route. The label is its own point rather
+   than text along the line, because a GeoJSON line is cut at tile edges and
+   MapLibre then repeats the text on every piece. */
+function routesFor(
+  origin: { lat: number; lon: number } | null,
+  routes: Route[],
+): FeatureCollection<LineString | Point> {
+  const features: Feature<LineString | Point>[] = [];
+  if (origin === null) return { type: "FeatureCollection", features };
+
+  for (const route of routes) {
+    const start: [number, number] = [origin.lon, origin.lat];
+    const end: [number, number] = [route.cinema.longitude, route.cinema.latitude];
+
+    /* The provider snaps both ends to the nearest road, so the real points
+       go on the ends to keep the line joined to the pins. */
+    const path = route.road ? [start, ...route.road.coordinates, end] : [start, end];
+
+    features.push(
+      {
+        type: "Feature",
+        properties: { kind: route.kinds[0] },
+        geometry: { type: "LineString", coordinates: path },
+      },
+      {
+        type: "Feature",
+        properties: { kind: route.kinds[0], label: routeFigure(route) },
+        geometry: { type: "Point", coordinates: middleOf(path) },
+      },
+    );
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
 /* One point per city, at the mean of its cinemas.
 
    This replaces MapLibre's clustering, which grouped by pixel distance: a
@@ -370,6 +420,7 @@ export function CinemaMap({
   radiusMetres,
   inRadiusIds,
   focus,
+  routes,
   onPickCity,
 }: {
   cinemas: Cinema[];
@@ -383,6 +434,7 @@ export function CinemaMap({
      the parent, or the update effect below runs on every render. */
   inRadiusIds: number[];
   focus: "selection" | "radius";
+  routes: Route[];
   onPickCity: (city: string) => void;
 }) {
   const router = useRouter();
@@ -391,6 +443,7 @@ export function CinemaMap({
   const readyRef = useRef(false);
   const viewRef = useRef<View>({ market, city, origin, radiusMetres, focus });
   const pickRef = useRef(onPickCity);
+  const routesRef = useRef(routes);
 
   /* Declared first so it runs first: effects fire in declaration order, so
      these are current before the map is built.
@@ -403,6 +456,7 @@ export function CinemaMap({
   useEffect(() => {
     viewRef.current = { market, city, origin, radiusMetres, focus };
     pickRef.current = onPickCity;
+    routesRef.current = routes;
   });
   useEffect(() => {
     if (!MAPTILER_KEY || !holder.current || cinemas.length === 0) return;
@@ -582,6 +636,11 @@ export function CinemaMap({
         type: "geojson",
         data: originFor(viewRef.current.origin),
       });
+      
+    map.addSource("routes", {
+      type: "geojson",
+      data: routesFor(viewRef.current.origin, routesRef.current),
+    });
 
       const chip = chipImage("rgba(13, 14, 18, 0.88)", horizon);
       if (chip && !map.hasImage("label-chip")) {
@@ -618,6 +677,49 @@ export function CinemaMap({
           "line-opacity": 0.55,
         },
       });
+      
+        /* Above the ring, under the pins. The line is how you get there and the
+       pin is where. The source holds lines and label points together, so each
+       layer filters for its own kind. */
+    map.addLayer({
+      id: "routes-line",
+      type: "line",
+      source: "routes",
+      filter: ["==", ["geometry-type"], "LineString"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": [
+          "match",
+          ["get", "kind"],
+          "nearest",
+          ROUTE_COLOURS.nearest,
+          "cheapest",
+          ROUTE_COLOURS.cheapest,
+          "furthest",
+          ROUTE_COLOURS.furthest,
+          ink,
+        ],
+        "line-width": 3,
+        "line-opacity": 0.9,
+      },
+    });
+
+    map.addLayer({
+      id: "routes-label",
+      type: "symbol",
+      source: "routes",
+      filter: ["==", ["geometry-type"], "Point"],
+      layout: {
+        "text-field": ["get", "label"],
+        "text-font": ["Noto Sans Bold", "Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-size": 12,
+      },
+      paint: {
+        "text-color": ink,
+        "text-halo-color": space,
+        "text-halo-width": 1.5,
+      },
+    });
 
       /* The breathing ring under each city pin. Its radius and opacity are
          driven from the animation loop below rather than from an expression,
@@ -857,9 +959,21 @@ export function CinemaMap({
     (map.getSource("origin") as GeoJSONSource | undefined)?.setData(
       originFor(origin),
     );
+      
 
     frameCamera(map, cinemas, { market, city, origin, radiusMetres, focus }, true);
   }, [cinemas, market, city, origin, radiusMetres, inRadiusIds, focus]);
+
+    /* Routes get their own effect, so loading a road route does not re-run
+     the camera move above. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+
+    (map.getSource("routes") as GeoJSONSource | undefined)?.setData(
+      routesFor(origin, routes),
+    );
+  }, [origin, routes]);
 
   /* No key, no map, and the page is untouched. Someone cloning this repo with
      no MapTiler account gets a working hero rather than a broken one. */

@@ -7,12 +7,15 @@ import { CinemaSearch } from "@/components/CinemaSearch";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
+import { RouteLegend } from "@/components/RouteLegend";
 import styles from "@/css/CinemasScreen.module.css";
 import { useApi } from "@/hooks/useApi";
+import { useRoadRoutes } from "@/hooks/useRoadRoutes";
 import { api } from "@/services/apiClient";
 import type { Cinema, CinemaCity, CinemasWithin, NearestCinema } from "@/types/api";
 import { distance, money } from "@/utils/format";
 import { MARKETS,  type Market } from "@/utils/markets";
+import { pickRoutes } from "@/utils/routes";
 
 
 /* Loaded only when this screen renders, for two reasons that happen to have
@@ -210,6 +213,21 @@ export function CinemasScreen() {
     [within],
   );
 
+    /* The three picks, from the rows the radius query already returned.
+     Memoised on within: pickRoutes builds a fresh array every call, and
+     useRoadRoutes and CinemaMap both depend on this one. A new array each
+     render would re-run both on every keystroke. */
+  const routes = useMemo(() => pickRoutes(within?.cinemas ?? []), [within]);
+
+  
+  /* Picks with their road route joined on, once one has been fetched. */
+  const {
+    routes: drawnRoutes,
+    loading: roadsLoading,
+    failed: roadsFailed,
+    load: loadRoads,
+  } = useRoadRoutes(routes, origin);
+
   const cities = useMemo(() => cityRows ?? [], [cityRows]);
 
   /* The row behind the chosen city, which is what holds its centroid. Scoped
@@ -259,6 +277,7 @@ export function CinemasScreen() {
               origin={origin}
               radiusMetres={radius}
               inRadiusIds={inRadiusIds}
+              routes={drawnRoutes}
               focus={focus}
               onPickCity={chooseCity}
             />
@@ -427,6 +446,14 @@ export function CinemasScreen() {
                 </div>
               )}
             </div>
+
+            
+            <RouteLegend
+              routes={drawnRoutes}
+              loading={roadsLoading}
+              failed={roadsFailed}
+              onLoadRoads={loadRoads}
+            />
 
             {/* An equivalent, not a disclaimer. A canvas cannot be read out,
                 and what makes this page accessible is that the same cinemas
