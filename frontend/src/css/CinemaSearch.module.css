@@ -91,4 +91,19 @@
   .holder {
     max-width: none;
   }
+
+  /* iOS Safari zooms the page when an input under 16px takes focus. */
+  .input {
+    font-size: 16px;
+  }
+
+  .list {
+    max-height: min(320px, 45vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .option {
+    padding: 11px 10px;
+  }
 }

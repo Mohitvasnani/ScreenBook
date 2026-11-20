@@ -12,7 +12,7 @@ import { useEffect, useRef } from "react";
 import styles from "@/css/CinemaMap.module.css";
 import type { Cinema } from "@/types/api";
 import {
-  FRAME_PADDING,
+  framePadding,
   GROUND_BEARING,
   RADIUS_PITCH,
   GROUND_PITCH,
@@ -327,7 +327,7 @@ function frameCamera(
     }
 
     map.fitBounds(bounds, {
-      padding: FRAME_PADDING,
+      padding: framePadding(map.getContainer().clientWidth),
       bearing: GROUND_BEARING,
       pitch: RADIUS_PITCH,
       duration: animate ? 2600 : 0,
@@ -343,7 +343,7 @@ function frameCamera(
 
   if (bounds && !bounds.isEmpty()) {
     map.fitBounds(bounds, {
-      padding: FRAME_PADDING,
+      padding: framePadding(map.getContainer().clientWidth),
       /* A city with one cinema has bounds of zero size, which fits at
          infinite zoom. A country never wants to be closer than this. */
       maxZoom: view.city !== null ? 12 : 7,

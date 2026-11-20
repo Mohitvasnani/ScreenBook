@@ -184,6 +184,8 @@ export function CinemaSearch({
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
+        autoComplete="off"
+        enterKeyHint="search"
       />
 
       {/* Always rendered, so a screen reader has something to announce into
@@ -205,12 +207,12 @@ export function CinemaSearch({
               className={
                 index === active ? `${styles.option} ${styles.optionOn}` : styles.option
               }
-              onPointerDown={(event) => {
+                            onMouseDown={(event) => {
                 /* Keeps focus in the input, so the outside-press handler does
                    not race the pick. */
                 event.preventDefault();
-                choose(result);
               }}
+              onClick={() => choose(result)}
               onPointerEnter={() => setActive(index)}
             >
               {result.kind === "city" ? (

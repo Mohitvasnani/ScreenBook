@@ -55,3 +55,13 @@ export const GROUND_PITCH = 50;
    panel. So the left needs the most room, and whatever is framed lands clear
    of the heading rather than underneath it. */
 export const FRAME_PADDING = { left: 380, right: 160, top: 110, bottom: 110 };
+
+/* Under the breakpoint the globe sits in a block of its own and nothing covers
+   it. The desktop padding is wider than a phone canvas, and fitBounds drops the
+   whole move when the padding leaves no room. */
+const NARROW_MAX = 860;
+const FRAME_PADDING_NARROW = { left: 32, right: 32, top: 32, bottom: 32 };
+
+export function framePadding(containerWidth: number) {
+  return containerWidth <= NARROW_MAX ? FRAME_PADDING_NARROW : FRAME_PADDING;
+}
