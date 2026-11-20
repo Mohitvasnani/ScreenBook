@@ -52,12 +52,61 @@
          Java record cannot extend another, which is a language limitation and not a
          statement about the contract: the two responses really are the same shape
          plus a distance. */
+            /* GET /api/cinemas/nearest, and the rows inside GET /api/cinemas/within.
+
+         extends rather than repeating the fields. The server repeats them because a
+         Java record cannot extend another, which is a language limitation and not a
+         statement about the contract: the two responses really are the same shape
+         plus a distance. */
       export interface NearestCinema extends Cinema {
         /* Whole metres, rounded server-side. Sub-metre precision on the position of
            a building is noise. */
         distanceMetres: number;
+        /* The cheapest seat actually on sale here inside the server's from-price
+           window, in the currency this row already names, and after the pricing
+           rules rather than before them.
+
+           Null means this cinema has no screening in that window, and that is the
+           only thing it means. Both geography endpoints price their rows, so a
+           null is never "this endpoint does not answer that". */
+        fromPriceMinor: number | null;
       }
-    
+
+            /* GET /api/cinemas/within.
+
+         An object rather than the bare array /nearest returns, because there are
+         two things to say here and only one of them is a list.
+
+         radiusMetres is what the server used, not what was asked for. It clamps,
+         so a client that asked for 500km and drew a circle from its own request
+         would draw one that does not match the rows inside it.
+
+         nearestOutside is non-null only when cinemas is empty. It is what lets the
+         panel say "nothing within 10km, the closest is 34km away" instead of
+         rendering an empty radius. */
+      export interface CinemasWithin {
+        radiusMetres: number;
+        cinemas: NearestCinema[];
+        nearestOutside: NearestCinema | null;
+      }
+
+      /* GET /api/cinemas/cities.
+
+         What the globe draws below z8: one labelled pin per city rather than 976
+         cinemas. The coordinates are the mean of that city's cinemas, computed
+         server-side now. The browser used to compute that mean, which is why the
+         browser needed the whole list.
+
+         No currency and no screen count. A city is not a thing with a price or a
+         screen; its cinemas are, and they carry their own. */
+      export interface CinemaCity {
+        country: "GB" | "IN";
+        state: string;
+        city: string;
+        cinemaCount: number;
+        latitude: number;
+        longitude: number;
+      }
       /* GET /api/cinemas/{cinemaId}. */
       export interface CinemaDetail extends Cinema {
         address: string;

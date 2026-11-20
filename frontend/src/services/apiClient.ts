@@ -17,6 +17,9 @@
      Cinema,
      CinemaDetail,
      NearestCinema,
+     CinemasWithin,
+     CinemaCity,
+
    } from "@/types/api";
    
    /* Spring's CookieCsrfTokenRepository.withHttpOnlyFalse() writes this one so the
@@ -184,6 +187,24 @@
           ...(limit === undefined ? {} : { limit: String(limit) }),
         })}`,
       ),
+          /* The radius search. metres is omitted when absent for the same reason
+       limit is on nearest: the server reads an absent parameter as "use the
+       default" and an unparseable one as a 400.
+
+       Returns an object rather than an array because an empty radius still has
+       something to say, which is the nearest cinema outside it. */
+    cinemasWithin: (lat: number, lon: number, metres?: number) =>
+      request<CinemasWithin>(
+        `/cinemas/within?${new URLSearchParams({
+          lat: String(lat),
+          lon: String(lon),
+          ...(metres === undefined ? {} : { metres: String(metres) }),
+        })}`,
+      ),
+
+    /* One row per city, which is what the globe draws below z8. 40 rows against
+       976, so this is the cheap call and the full list is the expensive one. */
+    cinemaCities: () => request<CinemaCity[]>("/cinemas/cities"),
 
     getCinema: (cinemaId: number) => request<CinemaDetail>(`/cinemas/${cinemaId}`),
 

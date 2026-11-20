@@ -1,47 +1,136 @@
+/* A panel rather than a rule across the page. The site body sits on
+   --color-bg, so lifting the footer one step to --color-n200 ends the page
+   with a surface instead of a line, and the bottom bar inside it can then be
+   divided again without needing a second colour. */
 .footer {
-  margin-top: 64px;
-  border-top: 1px solid var(--color-n400);
+  margin-top: 80px;
+  border-top: 1px solid var(--color-n300);
+  background: var(--color-n200);
 }
 
+/* Three columns, with the brand given twice the room because it carries a
+   sentence and the others carry a list. minmax(0, …) rather than bare fr so a
+   long link cannot push its column wider than its share. */
 .inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 24px;
-  max-width: 1040px;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 32px 48px;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 24px 16px;
-  font-size: 14px;
-  color: var(--color-n700);
+  padding: 48px 16px 36px;
 }
 
-.wordmark {
-  font-family: var(--font-heading);
-  font-stretch: 70%;
-  font-weight: 800;
-  font-size: 18px;
-  color: var(--color-ink);
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 42ch;
+}
+
+.logoLink {
+  display: inline-block;
+  width: fit-content;
+  border-radius: var(--radius);
+}
+
+.logoLink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
+/* Height is the control and the width follows from the viewBox, so the lockup
+   can never be stretched by a layout change. */
+.logo {
+  display: block;
 }
 
 .strapline {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--color-n700);
 }
 
-.nav {
+.column {
   display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-  margin-left: auto;
+  flex-direction: column;
+  gap: 10px;
 }
 
+/* Small, spaced and uppercase, so a column heading reads as a label rather
+   than competing with the headings in the page above it. */
+.columnTitle {
+  margin: 0 0 2px;
+  font-family: var(--font-heading);
+  font-stretch: 70%;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-n500);
+}
+
+/* fit-content so the hit area ends with the text. A full-width anchor in a
+   flex column is a link you can press from the far side of the footer. */
 .link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  width: fit-content;
+  font-size: 14px;
+  line-height: 1.4;
   color: var(--color-n700);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .link:hover {
   color: var(--color-accent);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* The licence credits. Required text, so it is never hidden, but it is fine
+   print and now reads as fine print rather than as another paragraph of the
+   site's own voice. */
+.bottom {
+  border-top: 1px solid var(--color-n300);
+}
+
+.bottomInner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 18px 16px 28px;
+}
+
+.fine {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-n500);
+}
+
+.fine a {
+  color: var(--color-n700);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fine a:hover {
+  color: var(--color-accent);
+}
+
+/* One column below the breakpoint. The brand's max-width in ch already keeps
+   the sentence readable, so nothing else has to change. */
+@media (max-width: 720px) {
+  .inner {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 36px 16px 28px;
+  }
 }

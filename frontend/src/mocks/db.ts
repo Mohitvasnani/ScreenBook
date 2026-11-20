@@ -16,6 +16,9 @@
      Showtime,
      Tier,
      UnavailableSeat,
+     NearestCinema,
+     CinemasWithin,
+     PriceLine,
    } from "@/types/api";
    
    import { CINEMAS, cinemaById, type MockCinema } from "./cinemas";
@@ -381,6 +384,49 @@ const RELEASED_ON_BY_TITLE = new Map(
        basePriceMinor: cheapest,
        priceMinor: pricingFor(showtime, cheapest).adjustedMinor,
      };
+   }
+
+      /* The cheapest price on sale at each of these cinemas inside the window. This
+      is the mock's CinemaListService.
+
+      Same two-layer split as the server, for the same reason: cinemas.ts returned
+      rows with a null price because geography is all it knows, and the minimum has
+      to be taken over pricingFor's output rather than over the base price. The
+      rules key off occupancy, lead time, time of day, day of week and weeks since
+      release, so a "from" price built on the base alone would sit well under
+      anything anyone is charged, which is worse than no price at all.
+
+      The window takes one clock reading. pricingFor takes its own, as it does
+      everywhere else in this file, so this does not pretend to the single-snapshot
+      guarantee CinemaListService gets from one readOnly transaction. In a mock
+      with ten cinemas and no concurrent writes there is nothing for that
+      guarantee to protect.
+
+      A cinema with no screening in the window keeps its null. Absence of a price
+      and a price of zero are different answers and only one of them is honest. */
+   export function priceCinemas(
+     rows: NearestCinema[],
+     windowHours: number,
+   ): NearestCinema[] {
+     const now = Date.now();
+     const until = now + windowHours * 60 * 60 * 1000;
+
+     return rows.map((row) => {
+       const prices = showtimesForCinema(row.id)
+         .filter((showtime) => {
+           const startsAt = Date.parse(showtime.startsAt);
+           return startsAt > now && startsAt <= until;
+         })
+         .map(
+           (showtime) =>
+             pricingFor(showtime, cheapestListed(showtime)).adjustedMinor,
+         );
+
+       return {
+         ...row,
+         fromPriceMinor: prices.length === 0 ? null : Math.min(...prices),
+       };
+     });
    }
    
    /* ----------------------------------------------------------------- writes */

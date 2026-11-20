@@ -31,7 +31,25 @@ export const PLANET = {
 
 /* Applied the moment the camera is framing something real. */
 export const GROUND_BEARING = -22;
-export const GROUND_PITCH = 42;
+/* Pitch is for arrival, not for overview, and it ramps.
+
+   The planet is an object you look at and a country is a map you read.
+   Neither is improved by perspective. A city is where the journey starts
+   actually arriving somewhere, so the tilt comes in there, and the street
+   keeps it.
+
+   There is a mechanical reason as well as a visual one. fitBounds solves for a
+   camera containing the bounds, and under pitch it is fitting a trapezoid
+   rather than a rectangle, approximately. Over a city that error is invisible.
+   Over India it is what pushes the country into the corner of the frame.
+
+   A radius is zero for a third reason again: the circle is a measurement, and
+   at 42 degrees a 5km circle draws half again as wide as it is tall, which is
+   untrue about the only number that view exists to set. */
+export const COUNTRY_PITCH = 0;
+export const RADIUS_PITCH = 0;
+export const CITY_PITCH = 35;
+export const GROUND_PITCH = 50;
 
 /* The map container is wider than what you can see: its left is behind the
    panel. So the left needs the most room, and whatever is framed lands clear

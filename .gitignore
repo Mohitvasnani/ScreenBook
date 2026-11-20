@@ -19,3 +19,4 @@ backend/jar.txt
 backend/*.json
 cinemas.json
 tools/osm_cinemas.json
+icon_ideas/

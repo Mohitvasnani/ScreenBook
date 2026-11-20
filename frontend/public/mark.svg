@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 80" width="96" height="80" role="img" aria-label="ScreenBook">
+  <title>ScreenBook</title>
+  <path d="M6 20 Q48 -4 90 20" fill="none" stroke="#ff7a59" stroke-width="10" stroke-linecap="round"/>
+  <g fill="#f2eee6"><path d="M28 30 H68 A8 8 0 0 1 76 38 V60 A18 18 0 0 1 58 78 H38 A18 18 0 0 1 20 60 V38 A8 8 0 0 1 28 30 Z"/></g>
+</svg>

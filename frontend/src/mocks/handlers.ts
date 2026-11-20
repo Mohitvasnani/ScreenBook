@@ -9,7 +9,9 @@
    import { PROBLEM_BASE, type ProblemDetail } from "@/services/problemDetails";
    import type {
     Cinema,
+    CinemaCity,
     CinemaDetail,
+    CinemasWithin,
     HeldSeat,
     Hold,
     HoldDetail,
@@ -19,7 +21,7 @@
     Showtime,
     UnavailableSeat,
   } from "@/types/api";
-  import { CINEMAS, cinemaById, nearest, toDetail, toSummary } from "./cinemas";
+  import { CINEMAS, cinemaById, nearest, toDetail, toSummary, cities, within } from "./cinemas";
   import {
     createBooking,
     AISLE_AFTER,
@@ -38,6 +40,7 @@
     seatsInOrder,
     showtimesForCinema,
     type SeatPosition,
+    priceCinemas,
   } from "./db";
    import { visibleRules } from "./pricing";
    
@@ -48,6 +51,12 @@
       both, same as the pricing bands. */
       const NEAREST_DEFAULT = 5;
       const NEAREST_MAX = 20;
+            /* Mirrors screenbook.cinemas.within-default-metres, within-max-metres and
+      from-price-window-hours. Same rule as the nearest pair: if you change one,
+      change both. */
+      const WITHIN_DEFAULT = 10_000;
+      const WITHIN_MAX = 50_000;
+      const FROM_PRICE_WINDOW_HOURS = 24;
 
       /* Spring's own 400, not one of our problem types. A missing or unparseable
       query parameter never reaches a controller, so there is nothing to throw an
@@ -133,13 +142,28 @@
    }
    
    export const handlers = [
-    http.get("/api/cinemas", async () => {
+       /* country is a filter, not a required parameter, because the globe's opening
+       state shows both markets at once. An unrecognised code is an empty list
+       rather than a 400, matching CinemaQuery.inCountry: cinema.country is a
+       foreign key to V22's country table, so the database already defines which
+       codes exist, and "cinemas in ZZ" has an honest answer. */
+    http.get("/api/cinemas", async ({ request }) => {
       await delay(LATENCY_MS);
-      const body: Cinema[] = CINEMAS.map(toSummary);
+
+      const country = new URL(request.url).searchParams.get("country");
+      const rows = CINEMAS.map(toSummary);
+      const body: Cinema[] =
+        country === null ? rows : rows.filter((c) => c.country === country);
+
       return HttpResponse.json(body);
     }),
 
     /* Before the :cinemaId route below, and that is load-bearing. MSW matches
+       handlers in array order, so a parameter route declared first would match
+       /api/cinemas/nearest and try to read "nearest" as an id. Spring prefers a
+       literal path segment regardless of order, so this is a difference between
+       the two routers rather than something the contract says. */
+        /* Before the :cinemaId route below, and that is load-bearing. MSW matches
        handlers in array order, so a parameter route declared first would match
        /api/cinemas/nearest and try to read "nearest" as an id. Spring prefers a
        literal path segment regardless of order, so this is a difference between
@@ -196,11 +220,98 @@
         );
       }
 
-      const body: NearestCinema[] = nearest(
-        lat,
-        lon,
-        Math.min(requested, NEAREST_MAX),
+      const body: NearestCinema[] = priceCinemas(
+        nearest(lat, lon, Math.min(requested, NEAREST_MAX)),
+        FROM_PRICE_WINDOW_HOURS,
       );
+      return HttpResponse.json(body);
+    }),
+        /* Also before :cinemaId, same reason.
+
+       The validation is nearest's with metres in place of limit, which is the
+       shape CinemaController has: one requireValidPoint, then one clamped
+       integer. Clamped rather than rejected, because asking for 500km is a
+       client that does not know the cap rather than a mistake, and the honest
+       answer is as far as we will look.
+
+       The fallback is priced too. "Nothing within 10km, the closest is 34km away
+       and from 850" is the sentence this endpoint exists to let the panel say,
+       and the price is half of it. */
+    http.get("/api/cinemas/within", async ({ request }) => {
+      await delay(LATENCY_MS);
+
+      const params = new URL(request.url).searchParams;
+      const lat = Number(params.get("lat"));
+      const lon = Number(params.get("lon"));
+      const rawMetres = params.get("metres");
+
+      for (const name of ["lat", "lon"] as const) {
+        const value = params.get(name);
+        if (value === null) {
+          return badRequest(
+            "/api/cinemas/within",
+            `Required request parameter '${name}' for method parameter type double is not present.`,
+          );
+        }
+        if (!Number.isFinite(Number(value))) {
+          return badRequest(
+            "/api/cinemas/within",
+            `Failed to convert value of type 'java.lang.String' to required type 'double'; nested exception is java.lang.NumberFormatException: For input string: "${value}"`,
+          );
+        }
+      }
+
+      if (lat < -90 || lat > 90) {
+        return invalid(
+          "/api/cinemas/within",
+          `lat must be between -90 and 90, got ${lat}.`,
+        );
+      }
+      if (lon < -180 || lon > 180) {
+        return invalid(
+          "/api/cinemas/within",
+          `lon must be between -180 and 180, got ${lon}.`,
+        );
+      }
+
+      const requested = rawMetres === null ? WITHIN_DEFAULT : Number(rawMetres);
+      if (!Number.isInteger(requested) || requested < 1) {
+        return invalid(
+          "/api/cinemas/within",
+          `metres must be at least 1, got ${requested}.`,
+        );
+      }
+
+      const radiusMetres = Math.min(requested, WITHIN_MAX);
+      const inside = priceCinemas(
+        within(lat, lon, radiusMetres),
+        FROM_PRICE_WINDOW_HOURS,
+      );
+
+      if (inside.length > 0) {
+        const body: CinemasWithin = {
+          radiusMetres,
+          cinemas: inside,
+          nearestOutside: null,
+        };
+        return HttpResponse.json(body);
+      }
+
+      const fallback = priceCinemas(
+        nearest(lat, lon, 1),
+        FROM_PRICE_WINDOW_HOURS,
+      );
+      const body: CinemasWithin = {
+        radiusMetres,
+        cinemas: [],
+        nearestOutside: fallback[0] ?? null,
+      };
+      return HttpResponse.json(body);
+    }),
+
+        http.get("/api/cinemas/cities", async () => {
+      await delay(LATENCY_MS);
+      const body: CinemaCity[] = cities();
       return HttpResponse.json(body);
     }),
 

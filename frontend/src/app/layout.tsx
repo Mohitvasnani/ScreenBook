@@ -28,6 +28,14 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  /* Open Graph image URLs have to be absolute. Without metadataBase, Next
+     resolves app/opengraph-image.png against localhost and warns at build
+     time, so the card renders as a broken image anywhere it is actually
+     shared. The env var exists so a preview deploy advertises itself rather
+     than production. */
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://screenbook.vercel.app",
+  ),
   title: "ScreenBook",
   description: "Cinema seat booking: two people claim the same seat, exactly one wins.",
 };

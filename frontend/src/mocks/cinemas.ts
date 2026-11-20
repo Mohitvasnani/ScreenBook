@@ -9,7 +9,7 @@
    Six are in England and four in India, so GBP and INR are both exercised and
    two different clocks decide what counts as an evening. */
 
-   import type { Cinema, CinemaDetail, NearestCinema } from "@/types/api";
+   import type { Cinema, CinemaDetail, NearestCinema, CinemaCity } from "@/types/api";
 
    export interface MockCinema {
      id: number;
@@ -214,13 +214,75 @@
    /* Sorted by distance and sliced, which is what ORDER BY <-> LIMIT n does. Ten
       rows means no index to stand in for, and a comment saying so is more honest
       than a fake one. */
+      /* Sorted by distance and sliced, which is what ORDER BY <-> LIMIT n does. Ten
+      rows means no index to stand in for, and a comment saying so is more honest
+      than a fake one.
+
+      fromPriceMinor goes out null, for the reason CinemaQuery constructs it null:
+      geography is all this layer knows. The price is attached in db.ts, which is
+      where the mock's CinemaListService lives. */
    export function nearest(lat: number, lon: number, limit: number): NearestCinema[] {
      return CINEMAS.map((cinema) => ({
        ...toSummary(cinema),
        distanceMetres: Math.round(
          distanceMetres(lat, lon, cinema.latitude, cinema.longitude),
        ),
+       fromPriceMinor: null,
      }))
        .sort((a, b) => a.distanceMetres - b.distanceMetres)
        .slice(0, limit);
+   }
+
+   /* Every cinema within a radius, nearest first. ST_DWithin plus the same
+      ORDER BY <-> the nearest list uses.
+
+      The filter runs on the unrounded distance and the rounding happens after it,
+      because the server compares the true distance and reports a rounded one.
+      Filtering on the rounded number would let a cinema at 10000.4m through a 10km
+      radius, which is the same class of boundary disagreement CinemaQuery passes
+      use_spheroid false to avoid in the other direction. */
+   export function within(lat: number, lon: number, metres: number): NearestCinema[] {
+     return CINEMAS.map((cinema) => ({
+       cinema,
+       exact: distanceMetres(lat, lon, cinema.latitude, cinema.longitude),
+     }))
+       .filter(({ exact }) => exact <= metres)
+       .sort((a, b) => a.exact - b.exact)
+       .map(({ cinema, exact }) => ({
+         ...toSummary(cinema),
+         distanceMetres: Math.round(exact),
+         fromPriceMinor: null,
+       }));
+   }
+
+   /* One row per city, grouped and averaged the way CITIES does it.
+
+      ST_Centroid(ST_Collect(points)) over points is their arithmetic mean, so a
+      plain mean here is the same number rather than an approximation of it.
+
+      Grouped on state and city, not city alone, matching the GROUP BY. Two cities
+      can share a name across states and the server does not merge them. */
+   export function cities(): CinemaCity[] {
+     const groups = new Map<string, MockCinema[]>();
+
+     for (const cinema of CINEMAS) {
+       const key = `${cinema.state}|${cinema.city}`;
+       const group = groups.get(key);
+       if (group) group.push(cinema);
+       else groups.set(key, [cinema]);
+     }
+
+     return [...groups.values()]
+       .map((group) => ({
+         country: toSummary(group[0]).country,
+         state: group[0].state,
+         city: group[0].city,
+         cinemaCount: group.length,
+         latitude: group.reduce((sum, c) => sum + c.latitude, 0) / group.length,
+         longitude: group.reduce((sum, c) => sum + c.longitude, 0) / group.length,
+       }))
+       .sort(
+         (a, b) =>
+           a.country.localeCompare(b.country) || a.city.localeCompare(b.city),
+       );
    }

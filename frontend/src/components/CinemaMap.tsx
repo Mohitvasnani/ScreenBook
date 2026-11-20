@@ -5,7 +5,7 @@
    Map would shadow the built-in Map, which this codebase uses for grouping
    rows and seats. */
 import { GeoJSONSource, LngLatBounds, MapLibreMap, Popup, setWorkerUrl } from "maplibre-gl";
-import type { FeatureCollection, Point } from "geojson";
+
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
@@ -14,13 +14,17 @@ import type { Cinema } from "@/types/api";
 import {
   FRAME_PADDING,
   GROUND_BEARING,
+  RADIUS_PITCH,
   GROUND_PITCH,
+  COUNTRY_PITCH,
+  CITY_PITCH,
   PLANET,
   
   type Market,
 } from "@/utils/markets";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { FeatureCollection, Point, Polygon } from "geojson";
 
 /* MapLibre derives its worker URL from import.meta.url and returns an empty
    string unless that is an http(s) URL. No bundler gives it one: webpack
@@ -101,8 +105,19 @@ function chipImage(fill: string, stroke: string): ImageData | null {
 }
 
 /* The market is filtered out here, in the data, rather than with a layer
-   filter, so the sources only ever describe what is being looked at. */
-function featuresFor(cinemas: Cinema[], market: Market | null): FeatureCollection<Point> {
+   filter, so the sources only ever describe what is being looked at.
+
+   inRadius is a property rather than a filter for the opposite reason. A
+   filter would remove the outside cinemas, and the plan asks for them dimmed:
+   a cinema you cannot reach in ten minutes is still worth knowing is there.
+   A null set means no radius is active, and then every cinema is "inside",
+   which is what makes the paint expression below need no second case for the
+   no-radius state. */
+function featuresFor(
+  cinemas: Cinema[],
+  market: Market | null,
+  inRadius: Set<number> | null,
+): FeatureCollection<Point> {
   return {
     type: "FeatureCollection",
     features: cinemas
@@ -118,8 +133,96 @@ function featuresFor(cinemas: Cinema[], market: Market | null): FeatureCollectio
           name: cinema.name,
           city: cinema.city,
           screenCount: cinema.screenCount,
+          inRadius: inRadius === null || inRadius.has(cinema.id),
         },
       })),
+  };
+}
+
+/* The sphere radius PostGIS uses, so a circle drawn here and ST_DWithin's
+   boundary are the same boundary. CinemaQuery passes use_spheroid false for
+   the same reason: a ring drawn on one model and a membership test run on
+   another disagree by about 0.3 percent, which is five metres at 1.5km, and
+   the cinema sitting on the line is exactly the one a viewer will question. */
+const EARTH_RADIUS_M = 6_371_008.8;
+
+/* The ring as plain coordinates, because two things need it and they must not
+   compute it twice: the polygon that gets drawn, and the bounds the camera
+   frames. Same discipline as the rest of this file, where the camera frames
+   the same rows the list is built from.
+
+   96 segments. A circle on a globe projection is not a circle on screen, so
+   this cannot be a styled div or a screen-space radius: each point is a real
+   destination at a real bearing, and the projection bends them as it should. */
+function ringOf(
+  origin: { lat: number; lon: number },
+  metres: number,
+  steps = 96,
+): [number, number][] {
+  const lat = (origin.lat * Math.PI) / 180;
+  const lon = (origin.lon * Math.PI) / 180;
+  const angular = metres / EARTH_RADIUS_M;
+
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= steps; i += 1) {
+    const bearing = (i / steps) * 2 * Math.PI;
+
+    const pointLat = Math.asin(
+      Math.sin(lat) * Math.cos(angular) +
+        Math.cos(lat) * Math.sin(angular) * Math.cos(bearing),
+    );
+    const pointLon =
+      lon +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(angular) * Math.cos(lat),
+        Math.cos(angular) - Math.sin(lat) * Math.sin(pointLat),
+      );
+
+    ring.push([(pointLon * 180) / Math.PI, (pointLat * 180) / Math.PI]);
+  }
+  return ring;
+}
+
+/* An empty collection when there is no origin, rather than a hidden layer. A
+   layer with no features draws nothing, which is one fewer piece of state than
+   toggling visibility and cannot get out of step with the data. */
+function circleFor(
+  origin: { lat: number; lon: number } | null,
+  metres: number,
+): FeatureCollection<Polygon> {
+  return {
+    type: "FeatureCollection",
+    features:
+      origin === null
+        ? []
+        : [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "Polygon",
+                coordinates: [ringOf(origin, metres)],
+              },
+            },
+          ],
+  };
+}
+
+function originFor(
+  origin: { lat: number; lon: number } | null,
+): FeatureCollection<Point> {
+  return {
+    type: "FeatureCollection",
+    features:
+      origin === null
+        ? []
+        : [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "Point", coordinates: [origin.lon, origin.lat] },
+            },
+          ],
   };
 }
 
@@ -179,34 +282,73 @@ function boundsOf(
   return bounds;
 }
 
+/* What the camera is being asked to look at. A record rather than six
+   positional parameters, for the reason ScreeningFacts exists: four of these
+   describe the selection and two of them are nullable, and a caller that
+   transposed market and city would compile perfectly well.
+
+   focus is the only field that is not data. It says which of the two things
+   the viewer touched most recently, because props alone cannot say whether a
+   city was chosen before or after a radius, and the camera has to frame the
+   last question rather than a fixed winner. */
+type View = {
+  market: Market | null;
+  city: string | null;
+  origin: { lat: number; lon: number } | null;
+  radiusMetres: number;
+  focus: "selection" | "radius";
+};
+
 /* The whole camera model, in one function, called from two places: once when
-   the map first loads and once whenever the selection changes.
+   the map first loads and once whenever the view changes.
 
    Frame what was asked about. A country frames that country's cinemas, a city
-   frames that city's. Both come out of the same rows the list below is built
-   from, so the globe and the list cannot disagree about where anything is,
-   and neither of them has a zoom number in it that someone tuned by eye.
+   frames that city's, a radius frames its own ring. All three come out of the
+   same numbers the panel below is built from, so the globe and the list cannot
+   disagree about where anything is, and none of them has a zoom number in it
+   that someone tuned by eye.
+
+   The radius needs no maxZoom, unlike a city. A city with one cinema has
+   bounds of zero size and fits at infinite zoom; a circle always has extent,
+   so fitBounds already has something to fit.
 
    Nothing selected is the only fixed camera: a planet, turned on its axis,
    framing nothing in particular because nothing has been asked yet. */
 function frameCamera(
   map: MapLibreMap,
   cinemas: Cinema[],
-  market: Market | null,
-  city: string | null,
+  view: View,
   animate: boolean,
 ) {
+  if (view.focus === "radius" && view.origin !== null) {
+    const bounds = new LngLatBounds();
+    for (const point of ringOf(view.origin, view.radiusMetres)) {
+      bounds.extend(point);
+    }
+
+    map.fitBounds(bounds, {
+      padding: FRAME_PADDING,
+      bearing: GROUND_BEARING,
+      pitch: RADIUS_PITCH,
+      duration: animate ? 2600 : 0,
+      animate,
+    });
+    return;
+  }
+
   const bounds =
-    market !== null || city !== null ? boundsOf(cinemas, market, city) : null;
+    view.market !== null || view.city !== null
+      ? boundsOf(cinemas, view.market, view.city)
+      : null;
 
   if (bounds && !bounds.isEmpty()) {
     map.fitBounds(bounds, {
       padding: FRAME_PADDING,
       /* A city with one cinema has bounds of zero size, which fits at
          infinite zoom. A country never wants to be closer than this. */
-      maxZoom: city !== null ? 12 : 7,
+      maxZoom: view.city !== null ? 12 : 7,
       bearing: GROUND_BEARING,
-      pitch: GROUND_PITCH,
+      pitch: view.city !== null ? CITY_PITCH : COUNTRY_PITCH,
       duration: animate ? 2600 : 0,
       animate,
     });
@@ -224,35 +366,44 @@ export function CinemaMap({
   cinemas,
   market,
   city,
+  origin,
+  radiusMetres,
+  inRadiusIds,
+  focus,
   onPickCity,
 }: {
   cinemas: Cinema[];
   market: Market | null;
   city: string | null;
+  origin: { lat: number; lon: number } | null;
+  radiusMetres: number;
+  /* The server decided this, not the map. It ran ST_DWithin against a GiST
+     index; recomputing the same membership in the browser would be a second
+     opinion that can disagree with the list on the boundary. Memoise it in
+     the parent, or the update effect below runs on every render. */
+  inRadiusIds: number[];
+  focus: "selection" | "radius";
   onPickCity: (city: string) => void;
 }) {
   const router = useRouter();
   const holder = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
-  const marketRef = useRef(market);
-  const cityRef = useRef(city);
+  const viewRef = useRef<View>({ market, city, origin, radiusMetres, focus });
   const pickRef = useRef(onPickCity);
 
   /* Declared first so it runs first: effects fire in declaration order, so
      these are current before the map is built.
 
-     Held in refs as well as props because the effect that builds the map must
+     Held in a ref as well as props because the effect that builds the map must
      not list them as dependencies. A dependency there means a new canvas, new
      tiles and a new everything on every click, to move a camera. The callback
      needs the same treatment for the opposite reason: handlers registered
      once would otherwise close over the first render's copy of it. */
   useEffect(() => {
-    marketRef.current = market;
-    cityRef.current = city;
+    viewRef.current = { market, city, origin, radiusMetres, focus };
     pickRef.current = onPickCity;
   });
-
   useEffect(() => {
     if (!MAPTILER_KEY || !holder.current || cinemas.length === 0) return;
 
@@ -412,14 +563,24 @@ export function CinemaMap({
     let pulseFrame = 0;
 
     map.on("load", () => {
-      map.addSource("cities", {
+           map.addSource("cities", {
         type: "geojson",
-        data: citiesFor(cinemas, marketRef.current),
+        data: citiesFor(cinemas, viewRef.current.market),
       });
 
       map.addSource("cinemas", {
         type: "geojson",
-        data: featuresFor(cinemas, marketRef.current),
+        data: featuresFor(cinemas, viewRef.current.market, null),
+      });
+
+      map.addSource("radius", {
+        type: "geojson",
+        data: circleFor(viewRef.current.origin, viewRef.current.radiusMetres),
+      });
+
+      map.addSource("origin", {
+        type: "geojson",
+        data: originFor(viewRef.current.origin),
       });
 
       const chip = chipImage("rgba(13, 14, 18, 0.88)", horizon);
@@ -434,6 +595,29 @@ export function CinemaMap({
           content: [4, 4, 44, 44],
         });
       }
+
+            /* Under the pins, deliberately. The circle is the question and the
+         cinemas are the answer, so it must not sit on top of them. */
+      map.addLayer({
+        id: "radius-fill",
+        type: "fill",
+        source: "radius",
+        paint: {
+          "fill-color": accent,
+          "fill-opacity": 0.07,
+        },
+      });
+
+      map.addLayer({
+        id: "radius-line",
+        type: "line",
+        source: "radius",
+        paint: {
+          "line-color": accent,
+          "line-width": 1.5,
+          "line-opacity": 0.55,
+        },
+      });
 
       /* The breathing ring under each city pin. Its radius and opacity are
          driven from the animation loop below rather than from an expression,
@@ -496,6 +680,13 @@ export function CinemaMap({
 
       /* The same handover zoom from the other side, so there is exactly one
          answer at every zoom level and no band where both or neither show. */
+            /* The same handover zoom from the other side, so there is exactly one
+         answer at every zoom level and no band where both or neither show.
+
+         Dimmed rather than filtered when a radius is active. With no radius
+         every feature carries inRadius true, so this one expression covers
+         both states and there is no "is a radius on" condition anywhere in
+         the style. */
       map.addLayer({
         id: "cinema",
         type: "circle",
@@ -506,6 +697,36 @@ export function CinemaMap({
           "circle-radius": 6,
           "circle-stroke-width": 2,
           "circle-stroke-color": surface,
+          "circle-opacity": ["case", ["get", "inRadius"], 1, 0.3],
+          "circle-stroke-opacity": ["case", ["get", "inRadius"], 1, 0.3],
+        },
+      });
+            /* Ink, not accent. Accent means "a cinema" everywhere else on this map,
+         and the one thing on screen that is not a cinema should not borrow its
+         colour. No pulse either: the city pins pulse to invite a click and
+         this is not clickable. */
+      map.addLayer({
+        id: "origin-ring",
+        type: "circle",
+        source: "origin",
+        paint: {
+          "circle-color": "transparent",
+          "circle-radius": 11,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": ink,
+          "circle-stroke-opacity": 0.5,
+        },
+      });
+
+      map.addLayer({
+        id: "origin-dot",
+        type: "circle",
+        source: "origin",
+        paint: {
+          "circle-color": ink,
+          "circle-radius": 5,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": space,
         },
       });
 
@@ -533,7 +754,7 @@ export function CinemaMap({
       /* Covers the race where the viewer picks a country before the style has
          finished loading. Not animated: the map has only just appeared and
          there is nothing to fly from. */
-      frameCamera(map, cinemas, marketRef.current, cityRef.current, false);
+      frameCamera(map, cinemas, viewRef.current, false);
       readyRef.current = true;
     });
 
@@ -569,6 +790,7 @@ export function CinemaMap({
         /* Never zoom out. Clicking a dot you are already on top of should not
            throw you backwards. */
         zoom: Math.max(map.getZoom(), STREET_ZOOM),
+        pitch: GROUND_PITCH,
         /* The target sits below the middle of the canvas so the popup, which
            opens upwards, has somewhere to be. */
         offset: [0, 70],
@@ -608,7 +830,7 @@ export function CinemaMap({
     };
   }, [cinemas, router]);
 
-  /* Props changed, so the live map is updated in place: new data into the
+    /* Props changed, so the live map is updated in place: new data into the
      existing sources, and one camera move. Nothing is rebuilt.
 
      No essential: true on any camera call. A viewer who has asked their
@@ -619,15 +841,25 @@ export function CinemaMap({
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
 
+    /* Null when there is no origin, so every cinema reads as inside and the
+       dim never applies. An empty Set would dim all of them. */
+    const inRadius = origin === null ? null : new Set(inRadiusIds);
+
     (map.getSource("cities") as GeoJSONSource | undefined)?.setData(
       citiesFor(cinemas, market),
     );
     (map.getSource("cinemas") as GeoJSONSource | undefined)?.setData(
-      featuresFor(cinemas, market),
+      featuresFor(cinemas, market, inRadius),
+    );
+    (map.getSource("radius") as GeoJSONSource | undefined)?.setData(
+      circleFor(origin, radiusMetres),
+    );
+    (map.getSource("origin") as GeoJSONSource | undefined)?.setData(
+      originFor(origin),
     );
 
-    frameCamera(map, cinemas, market, city, true);
-  }, [cinemas, market, city]);
+    frameCamera(map, cinemas, { market, city, origin, radiusMetres, focus }, true);
+  }, [cinemas, market, city, origin, radiusMetres, inRadiusIds, focus]);
 
   /* No key, no map, and the page is untouched. Someone cloning this repo with
      no MapTiler account gets a working hero rather than a broken one. */
