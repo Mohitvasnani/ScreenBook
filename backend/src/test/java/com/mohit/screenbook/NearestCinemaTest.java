@@ -13,6 +13,16 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 
+import com.mohit.screenbook.pricing.PricingRules;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,6 +49,18 @@ class NearestCinemaTest {
     JdbcClient jdbc;
     @Autowired
     CinemaController controller;
+
+    @Autowired
+    ShowtimeQuery showtimes;
+
+    @Autowired
+    PricingRules pricing;
+
+    @Autowired
+    Clock clock;
+
+    @Value("${screenbook.cinemas.from-price-window-hours}")
+    int fromPriceWindowHours;
 
     @Value("${screenbook.cinemas.within-max-metres}")
     int withinMax;
@@ -239,5 +261,210 @@ class NearestCinemaTest {
 
         assertEquals(withinMax, answer.radiusMetres(),
                 "the response did not report the radius it actually used");
+
+
+    }
+
+    /**
+     * The filter does not just return GB rows, it accounts for all of them.
+     * Two markets that do not sum to the whole list means a cinema has a
+     * country that is neither, which V22's foreign key should make impossible
+     * and which this would catch if it ever were not.
+     */
+    @Test
+    @DisplayName("the country filter partitions the list and loses nothing")
+    void countryFilterPartitionsTheList() {
+        List<CinemaSummary> all = cinemas.all();
+        List<CinemaSummary> gb = cinemas.inCountry("GB");
+        List<CinemaSummary> india = cinemas.inCountry("IN");
+
+        assertEquals(all.size(), gb.size() + india.size(),
+                "the two markets do not add up to the whole list");
+        assertTrue(gb.stream().allMatch(c -> "GB".equals(c.country())),
+                "a non-GB cinema came back from the GB filter");
+        assertTrue(india.stream().allMatch(c -> "IN".equals(c.country())),
+                "a non-IN cinema came back from the IN filter");
+    }
+
+    /**
+     * A filter answers "none", it does not refuse the question. The valid set
+     * lives in the country table, not in Java.
+     */
+    @Test
+    @DisplayName("an unrecognised country is an empty list, not an error")
+    void unknownCountryIsEmpty() {
+        assertTrue(cinemas.inCountry("ZZ").isEmpty(),
+                "a country code that is not in the country table returned rows");
+    }
+
+    /**
+     * The join-to-screen trap, pointed at the rollup. If CITIES ever grows a
+     * LEFT JOIN screen, every cinema is counted once per screen and this sum
+     * jumps to roughly 1,800 against a table of 980. That is the same
+     * duplicate-row shape oneRowPerCinema guards, except here it would show up
+     * as a pin in the wrong place rather than as a visible extra row.
+     */
+    @Test
+    @DisplayName("the city rollup accounts for every cinema exactly once")
+    void cityRollupCountsEveryCinema() {
+        List<CinemaCity> cities = cinemas.cities();
+
+        long cinemaRows = jdbc.sql("SELECT count(*) FROM cinema")
+                .query(Long.class).single();
+        long distinctCities = jdbc.sql("""
+                        SELECT count(*)
+                        FROM (SELECT DISTINCT country, state, city FROM cinema) d
+                        """)
+                .query(Long.class).single();
+
+        assertEquals(distinctCities, cities.size(),
+                "the rollup has a different number of groups than the table has cities");
+        assertEquals(cinemaRows,
+                cities.stream().mapToInt(CinemaCity::cinemaCount).sum(),
+                "the city counts do not sum to the table, so a join multiplied or dropped rows");
+    }
+
+    /**
+     * The centroid, checked against the rows it was computed from rather than
+     * against a coordinate anyone typed. A mean outside its own extent is
+     * arithmetically impossible, so this fails only if ST_Y and ST_X were
+     * crossed or the ::geometry cast changed what was collected. Liverpool is
+     * near 53N 3W, so a swap puts the latitude at about -2.99, which is a long
+     * way outside a range of 53.3 to 53.5.
+     *
+     * Liverpool because it is the only Liverpool in the data. If a second one
+     * ever arrives in another state this filters on city alone and goes wrong,
+     * which is the same simplification V25's nearest-centre city assignment
+     * already makes.
+     */
+    @Test
+    @DisplayName("the city pin sits inside the extent of its own cinemas")
+    void cityPinSitsInsideItsOwnCinemas() {
+        CinemaCity liverpool = cinemas.cities().stream()
+                .filter(c -> "Liverpool".equals(c.city()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no Liverpool in the city rollup"));
+
+        List<CinemaSummary> its = cinemas.all().stream()
+                .filter(c -> "Liverpool".equals(c.city()))
+                .toList();
+
+        double minLat = its.stream().mapToDouble(CinemaSummary::latitude).min().orElseThrow();
+        double maxLat = its.stream().mapToDouble(CinemaSummary::latitude).max().orElseThrow();
+        double minLon = its.stream().mapToDouble(CinemaSummary::longitude).min().orElseThrow();
+        double maxLon = its.stream().mapToDouble(CinemaSummary::longitude).max().orElseThrow();
+
+        assertTrue(liverpool.latitude() >= minLat && liverpool.latitude() <= maxLat,
+                "the city latitude is outside its own cinemas, got " + liverpool.latitude());
+        assertTrue(liverpool.longitude() >= minLon && liverpool.longitude() <= maxLon,
+                "the city longitude is outside its own cinemas, got " + liverpool.longitude());
+        assertEquals(its.size(), liverpool.cinemaCount(),
+                "the rollup and the full list disagree on how many cinemas Liverpool has");
+    }
+
+    /**
+     * Absence of a price is not a price of zero. In tests the showtime seeder
+     * is off and V13 only seeded Jaipur, so every GB cinema is in this state,
+     * which makes it the cheap half of the contract to pin.
+     *
+     * The non-empty assertion first, so this cannot pass by finding no
+     * cinemas at all and declaring all none of them correct.
+     */
+    @Test
+    @DisplayName("a cinema with no screenings in the window reports no from-price")
+    void noScreeningsMeansNoFromPrice() {
+        CinemasWithin answer =
+                controller.within(LIME_STREET_LAT, LIME_STREET_LON, 20_000);
+
+        assertFalse(answer.cinemas().isEmpty(),
+                "no cinemas within 20km of Lime Street, so there is nothing to check");
+
+        for (NearestCinema cinema : answer.cinemas()) {
+            assertNull(cinema.fromPriceMinor(),
+                    cinema.name() + " reported a from-price with no screenings seeded");
+        }
+    }
+
+    /**
+     * The regression this is really for: taking min() over
+     * base_from_price_minor in SQL, which is one line, answerable, and the
+     * wrong number, because it is the price before all five rules.
+     *
+     * There is no assertion that the reported figure equals a minimum computed
+     * here, and that is deliberate. The service reads the Clock and so would
+     * this test, a few milliseconds apart, and both the window boundary and
+     * the lead-time band are decided by that instant. Comparing two
+     * clock-derived prices is the trap ShowtimeListingTest.oneAgreesWithTheListing
+     * documents: a test that fails once a year is worse than one that checks
+     * what it means to check. So this checks the thing that cannot drift,
+     * which is that the number is not the base minimum, on the days when the
+     * rules move the price at all.
+     */
+    @Test
+    @DisplayName("the from-price is the priced minimum, not the base minimum")
+    void fromPriceIsNotTheBaseMinimum() {
+        long cinemaId = cinemaId("Cinepolis", "Jaipur");
+        CinemaDetail cinepolis = cinemas.detail(cinemaId);
+
+        CinemasWithin answer = controller.within(
+                cinepolis.latitude(), cinepolis.longitude(), 20_000);
+
+        Integer reported = answer.cinemas().stream()
+                .filter(c -> c.id() == cinemaId)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Cinepolis was not in its own radius"))
+                .fromPriceMinor();
+
+        assertNotNull(reported, "Cinepolis has seeded screenings and reported no from-price");
+
+        Instant now = clock.instant();
+        Instant until = now.plus(Duration.ofHours(fromPriceWindowHours));
+
+        List<ShowtimeRow> inWindow = showtimes.upcomingRows(cinemaId, 500).stream()
+                .filter(row -> !row.startsAt().isAfter(until))
+                .toList();
+
+        assertFalse(inWindow.isEmpty(),
+                "no screenings at Cinepolis in the next " + fromPriceWindowHours + " hours");
+
+        int minBase = inWindow.stream()
+                .mapToInt(ShowtimeRow::baseFromPriceMinor)
+                .min().orElseThrow();
+        int minPriced = inWindow.stream()
+                .mapToInt(row -> pricing.priceFor(
+                        row.baseFromPriceMinor(), row.facts(), now).adjustedPriceMinor())
+                .min().orElseThrow();
+
+        if (minBase != minPriced) {
+            assertNotEquals(minBase, reported.intValue(),
+                    "the from-price is the base minimum, so the rules were never applied");
+        }
+    }
+
+    /**
+     * The fold turns one row per screening into one row per cinema, and this
+     * is what says it neither drops a cinema nor keeps a screening.
+     *
+     * The crash case is covered too, loudly: Collectors.toMap without its
+     * merge function throws IllegalStateException on the second screening at
+     * any cinema, so a missing Math::min fails this before the assertions run.
+     */
+    @Test
+    @DisplayName("pricing changes the prices and not the shape of the list")
+    void pricingDoesNotChangeTheShapeOfTheList() {
+        CinemaDetail cinepolis = cinemas.detail(cinemaId("Cinepolis", "Jaipur"));
+        double lat = cinepolis.latitude();
+        double lon = cinepolis.longitude();
+
+        List<NearestCinema> geography = cinemas.within(lat, lon, 20_000);
+        CinemasWithin priced = controller.within(lat, lon, 20_000);
+
+        assertEquals(geography.size(), priced.cinemas().size(),
+                "the priced list and the geography disagree on how many cinemas are in the radius");
+        assertEquals(geography.stream().map(NearestCinema::id).toList(),
+                priced.cinemas().stream().map(NearestCinema::id).toList(),
+                "pricing reordered the radius");
+        assertTrue(priced.cinemas().stream().anyMatch(c -> c.fromPriceMinor() != null),
+                "no cinema near Jaipur got a price, so the price query matched nothing");
     }
 }

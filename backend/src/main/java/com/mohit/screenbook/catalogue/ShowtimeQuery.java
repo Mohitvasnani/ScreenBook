@@ -1,9 +1,11 @@
 package com.mohit.screenbook.catalogue;
 
 import com.mohit.screenbook.common.NotFoundException;
+import com.mohit.screenbook.pricing.ScreeningFacts;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.Instant;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -136,6 +138,71 @@ public class ShowtimeQuery {
             WHERE st.id = :showtimeId
             """;
 
+    /* The cheapest price on sale at each of a set of cinemas, inside a window.
+   One row per screening, not one row per cinema: the minimum is taken in
+   Java, because the five pricing rules live in PricingRules and key off
+   occupancy, lead time, time of day, day of week and weeks since release.
+   A SQL min() can only reach base_from_price_minor, which is the price
+   before any rule has applied, and on a busy evening screening that is far
+   under anything on sale.
+
+   One row per screening is enough rather than one per seat because every
+   one of those five rules is a fact about the screening. The cheapest seat
+   at a screening is therefore always in the cheapest tier, which is the
+   column the subquery already computes.
+
+   Filtered on cinema ids rather than on a radius, which is the decision in
+   this query. CinemaQuery.within has already chosen the cinemas, with the
+   clamp applied and use_spheroid false; repeating ST_DWithin here would be
+   a second place to keep that flag right, and a boundary cinema priced
+   under a spheroid and listed under a sphere is a bug nobody would find.
+   It also makes this query work unchanged for /nearest, which has no
+   radius at all.
+
+   IN (:cinemaIds) expands to one bind parameter per id, so a 60 cinema
+   radius and a 61 cinema radius are two different prepared statements and
+   neither reuses the other's plan. The Postgres answer is = ANY on an
+   array, which is one parameter and one plan, and it needs a java.sql.Array
+   that JdbcClient will not build from a List. At this size the planning is
+   cheaper than the workaround is to read, and the comment is here so the
+   trade is a choice rather than an oversight.
+
+   The window comes in as two instants rather than being written as
+   now() and now() + interval '24 hours'. now() is the database's clock and
+   pricing runs against the injected Clock, so a window computed in SQL and
+   a lead time computed in Java would be two clocks deciding one answer.
+   The tests hold the Clock still and could not hold the database's.
+
+   Worth flagging rather than fixing here: UPCOMING still filters on
+   st.starts_at > now(), so the listing already has that split. It has not
+   bitten anything, because a listing's boundary row is one screening at the
+   very edge of "upcoming", but it is the same latent issue.
+
+   No ORDER BY. The caller folds these to a minimum per cinema, and sorting
+   rows that are about to be reduced is work thrown away. */
+    private static final String CHEAPEST_IN_WINDOW = """
+            SELECT sc.cinema_id     AS cinema_id,
+                   st.starts_at     AS starts_at,
+                   ci.timezone      AS timezone,
+                   f.released_on    AS released_on,
+                   occ.seats_taken  AS seats_taken,
+                   occ.seats_total  AS seats_total,
+
+                   (SELECT min(p.price_minor)
+                      FROM hall_class_tier_price p
+                     WHERE p.currency   = ci.currency
+                       AND p.hall_class = sc.hall_class)  AS base_from_price_minor
+
+            FROM showtime st
+            JOIN screen sc  ON sc.id = st.screen_id
+            JOIN cinema ci  ON ci.id = sc.cinema_id
+            JOIN film   f   ON f.id  = st.film_id
+            JOIN showtime_occupancy occ ON occ.showtime_id = st.id
+            WHERE sc.cinema_id IN (:cinemaIds)
+              AND st.starts_at >  :from
+              AND st.starts_at <= :until
+            """;
+
     private static final String CINEMA_EXISTS =
             "SELECT exists(SELECT 1 FROM cinema WHERE id = :cinemaId)";
 
@@ -205,6 +272,39 @@ public class ShowtimeQuery {
                 .optional()
                 .orElseThrow(() -> new NotFoundException(
                         "No showtime with id %d.".formatted(showtimeId)));
+    }
+
+    /**
+     * Every screening at these cinemas inside the window, with the ingredients
+     * the pricing rules need. The caller prices them and keeps the lowest per
+     * cinema.
+     *
+     * An empty id list short-circuits rather than running the query, because
+     * IN () is a syntax error in Postgres and an empty radius is the ordinary
+     * case, not an exceptional one.
+     */
+    @Transactional(readOnly = true)
+    public List<FromPriceRow> cheapestInWindow(List<Long> cinemaIds,
+                                               Instant from,
+                                               Instant until) {
+        if (cinemaIds.isEmpty()) {
+            return List.of();
+        }
+
+        return jdbc.sql(CHEAPEST_IN_WINDOW)
+                .param("cinemaIds", cinemaIds)
+                .param("from", from)
+                .param("until", until)
+                .query((rs, rowNum) -> new FromPriceRow(
+                        rs.getLong("cinema_id"),
+                        rs.getInt("base_from_price_minor"),
+                        new ScreeningFacts(
+                                rs.getInt("seats_taken"),
+                                rs.getInt("seats_total"),
+                                rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
+                                ZoneId.of(rs.getString("timezone")),
+                                rs.getObject("released_on", LocalDate.class))))
+                .list();
     }
 
     private static ShowtimeRow toRow(ResultSet rs, int rowNum) throws SQLException {
