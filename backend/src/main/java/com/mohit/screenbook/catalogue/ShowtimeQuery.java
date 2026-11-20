@@ -6,7 +6,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
-
+import java.time.ZoneOffset;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -293,8 +293,14 @@ public class ShowtimeQuery {
 
         return jdbc.sql(CHEAPEST_IN_WINDOW)
                 .param("cinemaIds", cinemaIds)
-                .param("from", from)
-                .param("until", until)
+                /* OffsetDateTime, not Instant, the same as RefreshTokens and
+   PasswordResetTokens: the driver will not infer a SQL type for
+   an Instant, because an Instant carries no zone and it
+   declines to guess. UTC because that is what timestamptz
+   stores regardless, so this adds a zone for the driver without
+   changing the instant being compared. */
+                .param("from", from.atOffset(ZoneOffset.UTC))
+                .param("until", until.atOffset(ZoneOffset.UTC))
                 .query((rs, rowNum) -> new FromPriceRow(
                         rs.getLong("cinema_id"),
                         rs.getInt("base_from_price_minor"),
