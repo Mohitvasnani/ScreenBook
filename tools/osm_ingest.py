@@ -39,6 +39,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import time
+import datetime
+from datetime import date
 
 # Tried in order. The main instance is the busiest and refuses with 502 or 429
 # when its queue is full, which in the afternoon it usually is. The mirrors run
@@ -66,6 +68,17 @@ CACHE = os.path.join(os.path.dirname(__file__), "osm_cinemas.json")
 # assigned to its nearest centre afterwards, so a cinema between Mumbai and
 # Thane lands in exactly one of them.
 RADIUS_METRES = 20000
+
+# The tags a composed address can draw on, and the count used to decide which
+# copy of a duplicated venue survives.
+ADDR_KEYS = ("addr:full", "addr:housenumber", "addr:street", "addr:suburb",
+             "addr:city", "addr:postcode")
+
+# Two records of one venue. OSM frequently holds a point for the entrance and a
+# building way for the same cinema, and there are 15 such pairs in this data.
+# Generous on purpose: two genuinely different cinemas sharing a name this close
+# together are in one shopping centre, where one row is the right answer anyway.
+DUPLICATE_METRES = 150
 
 TIMEOUT_SECONDS = 300
 
@@ -229,33 +242,11 @@ def distance_km(lat_a, lon_a, lat_b, lon_b):
 def nearest_city(lat, lon):
     return min(CITIES, key=lambda c: distance_km(lat, lon, c[2], c[3]))
 
-
-def report(body):
-    found = {name: [] for name, _, _, _ in CITIES}
-    unnamed = 0
-    unplaceable = 0
-    seen = set()
-
-    for element in body.get("elements", []):
-        point = coordinates(element)
-        if point is None:
-            unplaceable += 1
-            continue
-
-        name = (element.get("tags") or {}).get("name")
-        if not name:
-            # A cinema OSM knows the location of but not the name of. V18
-            # dropped these too. A row called "Cinema" is not a cinema row.
-            unnamed += 1
-            continue
-
-        key = (element["type"], element["id"])
-        if key in seen:
-            continue
-        seen.add(key)
-
-        city = nearest_city(*point)
-        found[city[0]].append(name)
+def report(rows, kept, dropped):
+    counted = {}
+    for row in kept:
+        counted.setdefault(row["city"], 0)
+        counted[row["city"]] += 1
 
     print()
     print(f"{'city':<22}{'state':<18}{'now':>5}{'osm':>6}{'delta':>8}")
@@ -264,30 +255,288 @@ def report(body):
     totals = {"GB": [0, 0], "IN": [0, 0]}
     for name, state, _, _ in CITIES:
         now = EXISTING.get(name, 0)
-        osm = len(found[name])
-        country = country_of(state)
-        totals[country][0] += now
-        totals[country][1] += osm
+        osm = counted.get(name, 0)
+        bucket = totals[country_of(state)]
+        bucket[0] += now
+        bucket[1] += osm
         print(f"{name:<22}{state:<18}{now:>5}{osm:>6}{osm - now:>+8}")
 
     print("-" * 59)
-    for country in ("GB", "IN"):
-        now, osm = totals[country]
-        print(f"{country:<40}{now:>5}{osm:>6}{osm - now:>+8}")
+    for code in ("GB", "IN"):
+        now, osm = totals[code]
+        print(f"{code:<40}{now:>5}{osm:>6}{osm - now:>+8}")
 
     grand_now = totals["GB"][0] + totals["IN"][0]
     grand_osm = totals["GB"][1] + totals["IN"][1]
     print(f"{'total':<40}{grand_now:>5}{grand_osm:>6}{grand_osm - grand_now:>+8}")
     print()
-    print(f"{unnamed} tagged cinemas with no name, dropped", file=sys.stderr)
-    if unplaceable:
-        print(f"{unplaceable} with no usable coordinate, dropped", file=sys.stderr)
+
+    addressed = sum(1 for row in kept if row["address"])
+    print(f"{len(rows)} named and locatable, {len(rows) - len(kept)} dropped as "
+          f"one venue mapped twice, {len(kept)} kept", file=sys.stderr)
+    print(f"{addressed} of those carry an address, {len(kept) - addressed} do not",
+          file=sys.stderr)
+    print(f"{dropped['unnamed']} tagged cinemas with no name, dropped",
+          file=sys.stderr)
+    if dropped["unplaceable"]:
+        print(f"{dropped['unplaceable']} with no usable coordinate, dropped",
+              file=sys.stderr)
+def one_line(text):
+    """OSM values arrive with newlines and double spaces in them.
+
+    Postgres would accept a literal newline inside a quoted string, so this is
+    for the reader rather than the parser: a migration where one value spans
+    three lines is a migration nobody diffs. Returns None for empty, because
+    the caller's question is always "is there one", never "is it blank".
+    """
+    collapsed = " ".join((text or "").split())
+    return collapsed or None
+
+
+def lit(value):
+    """A single-quoted SQL literal, or NULL.
+
+    Doubling the quote is the whole of the escaping, because every value here
+    is a string or NULL and goes into a file a human reads before it runs.
+    Nothing from OSM reaches a live query, so this is not an injection surface,
+    but "Shoppers' Stop Cinema" is an ordinary name and would break the file.
+    """
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def compose_address(tags):
+    """A street line from whatever tags exist, or None.
+
+    addr:full wins when present, because a mapper wrote it as one line on
+    purpose. Otherwise house number and street join with a space, since
+    "12 Bold Street" is how an address is written and "12, Bold Street" is not,
+    and the suburb and postcode follow as their own comma-separated parts.
+
+    addr:city is deliberately not used. The city column already holds it, and
+    repeating it inside the address is the kind of duplication that disagrees
+    with itself eventually.
+
+    Returns None rather than "". V24 made the column nullable so an unmapped
+    address is absent, and an empty string would be a third state to test for.
+    """
+    full = one_line(tags.get("addr:full"))
+    if full:
+        return full
+
+    street = one_line(tags.get("addr:street"))
+    number = one_line(tags.get("addr:housenumber"))
+    first = " ".join(x for x in (number, street) if x) if street else None
+
+    parts = (first,
+             one_line(tags.get("addr:suburb")),
+             one_line(tags.get("addr:postcode")))
+    return ", ".join(x for x in parts if x) or None
+
+
+def records(body):
+    """Every usable cinema from the cached response, assigned to a city.
+
+    Usable means named and locatable. There are 49 cinemas in these cities that
+    OSM has a position for and no name, and they are dropped for the reason V18
+    dropped the same kind: a row called "Cinema" is not a cinema row.
+
+    City comes from the nearest centre, not from addr:city, which only a third
+    of these carry. The simplification is real and worth stating: a Birkenhead
+    cinema comes out tagged Liverpool. For an app where people search for
+    "Liverpool" that is arguably the right answer, and the migration header
+    says so rather than leaving it to be discovered.
+
+    state comes with the city, and the generated SQL derives currency, timezone
+    and country from it using the same CASE V18 and V22 used, so that rule
+    continues to live in exactly one place.
+    """
+    rows = []
+    dropped = {"unnamed": 0, "unplaceable": 0}
+
+    for element in body.get("elements", []):
+        point = coordinates(element)
+        if point is None:
+            dropped["unplaceable"] += 1
+            continue
+
+        tags = element.get("tags") or {}
+        name = one_line(tags.get("name"))
+        if not name:
+            dropped["unnamed"] += 1
+            continue
+
+        city = nearest_city(*point)
+        rows.append({
+            "name": name,
+            "city": city[0],
+            "state": city[1],
+            "lat": point[0],
+            "lon": point[1],
+            "osm_type": element["type"],
+            "osm_id": element["id"],
+            "address": compose_address(tags),
+            "detail": sum(1 for key in ADDR_KEYS if key in tags),
+        })
+
+    return rows, dropped
+
+
+def dedupe(rows):
+    """One venue mapped twice is still one cinema.
+
+    V24's unique constraint is on (osm_type, osm_id), so Postgres cannot catch
+    these: a node and a way are different objects with different ids and both
+    would insert cleanly. The only thing that knows they are the same cinema is
+    this function.
+
+    Which copy survives, in order: the one with more address tags, because it
+    is the better record; then a way over a node, because a building outline
+    describes a venue better than a dropped pin; then the lower id, so the
+    output is the same on every run and the migration does not reshuffle.
+
+    Grouped by name before measuring, so this is 991 lookups and a handful of
+    distance calculations rather than half a million.
+    """
+    ordered = sorted(rows, key=lambda r: (-r["detail"],
+                                          r["osm_type"] != "way",
+                                          r["osm_id"]))
+    seen = {}
+    kept = []
+
+    for row in ordered:
+        near = seen.setdefault(row["name"], [])
+        if any(distance_km(row["lat"], row["lon"], other["lat"], other["lon"]) * 1000
+               < DUPLICATE_METRES
+               for other in near):
+            continue
+        near.append(row)
+        kept.append(row)
+
+    return kept
+
+
+def write_sql(handle, rows):
+    """The cinema rows, and nothing else.
+
+    No screens and no seats. V18 generated those inline, but RoomSeeder now
+    owns that job and converges on every boot, so this migration inserts
+    buildings and the rooms appear by themselves on the next startup. That is
+    the whole reason the seeder exists and the reason this file is 991 rows
+    rather than 991 rows plus a copy of V18's generation logic.
+
+    INSERT ... SELECT over a VALUES list rather than a plain INSERT, because
+    currency, timezone and country are all derived from state by the same CASE
+    V18 and V22 used and writing them out per row would be three more chances
+    to disagree with that rule.
+
+    ON CONFLICT (osm_type, osm_id) DO NOTHING is what makes this safe to run
+    against a database that already holds some of these, which it does: all 130
+    of V18's rows are in here too, and V24 backfilled their ids precisely so
+    this would skip them.
+    """
+    out = handle.write
+    rows = sorted(rows, key=lambda r: (r["city"], r["name"], r["osm_id"]))
+
+    with_address = sum(1 for r in rows if r["address"])
+
+    out(f"-- Generated by tools/osm_ingest.py on {date.today().isoformat()}.\n")
+    out("-- Do not edit by hand. Regenerate into a new migration instead.\n")
+    out("--\n")
+    out(f"-- {len(rows)} cinemas from OpenStreetMap, via Overpass, within\n")
+    out(f"-- {RADIUS_METRES // 1000}km of each of the {len(CITIES)} cities this\n")
+    out("-- database already covers.\n")
+    out("--\n")
+    out("-- Overpass rather than Nominatim, which V18 used. Nominatim is a\n")
+    out("-- geocoder: it ranks its answers and caps them, because it exists to\n")
+    out("-- answer \"which one did you mean\". Overpass is the bulk query\n")
+    out("-- interface to the same database and returns everything tagged. V18\n")
+    out("-- used Nominatim only because Overpass refused that network, so the\n")
+    out("-- 130 rows were an artefact of the tool rather than a statement\n")
+    out("-- about what OSM holds.\n")
+    out("--\n")
+    out("-- Names and coordinates are real. The osm_type and osm_id on every\n")
+    out("-- row are the identity V24 added, so any of these can be checked\n")
+    out("-- against openstreetmap.org and so that re-running the ingestion is\n")
+    out("-- idempotent rather than a hand-merge.\n")
+    out("--\n")
+    out(f"-- {with_address} of these carry an address and {len(rows) - with_address}\n")
+    out("-- do not, because two thirds of OSM's cinemas have no addr:* tags at\n")
+    out("-- all. V24 made the column nullable rather than filling the gap:\n")
+    out("-- bulk reverse geocoding through Nominatim is against their usage\n")
+    out("-- policy, a commercial geocoder would dress a vendor's guess from\n")
+    out("-- coordinates up as something a mapper wrote, and composing\n")
+    out("-- \"Jaipur, Rajasthan\" would be inventing data. The map answers\n")
+    out("-- where a building is, exactly, and the API sends the distance.\n")
+    out("--\n")
+    out("-- City is assigned by nearest centre rather than by addr:city, which\n")
+    out("-- only a third of these carry. So a Birkenhead cinema is tagged\n")
+    out("-- Liverpool. For an app where people search for \"Liverpool\" that is\n")
+    out("-- arguably right, but it is a simplification and this is it stated.\n")
+    out("--\n")
+    out("-- Screens and seats are not here. RoomSeeder converges on every boot\n")
+    out("-- and will build rooms for every one of these on the next startup.\n")
+    out("--\n")
+    out("-- Licence is ODbL, so \"(c) OpenStreetMap contributors\" has to appear\n")
+    out("-- wherever these are displayed, which it already does.\n")
+    out("\n")
+
+    out("INSERT INTO cinema\n")
+    out("    (name, city, state, address, currency, timezone, location,\n")
+    out("     country, osm_type, osm_id)\n")
+    out("SELECT v.name, v.city, v.state, v.address,\n")
+    out("       CASE WHEN v.state IN ('England', 'Scotland') THEN 'GBP'\n")
+    out("            ELSE 'INR' END,\n")
+    out("       CASE WHEN v.state IN ('England', 'Scotland') THEN 'Europe/London'\n")
+    out("            ELSE 'Asia/Kolkata' END,\n")
+    out("       ST_SetSRID(ST_MakePoint(CAST(v.lon AS double precision),\n")
+    out("                               CAST(v.lat AS double precision)),\n")
+    out("                  4326)::geography,\n")
+    out("       CASE WHEN v.state IN ('England', 'Scotland') THEN 'GB'\n")
+    out("            ELSE 'IN' END,\n")
+    out("       v.osm_type, v.osm_id\n")
+    out("FROM (VALUES\n")
+
+    values = []
+    for row in rows:
+        values.append(
+            "    ({}, {}, {}, {}, {}, {}, {}, {})".format(
+                lit(row["name"]), lit(row["city"]), lit(row["state"]),
+                lit(row["address"]),
+                f"{row['lon']:.6f}", f"{row['lat']:.6f}",
+                lit(row["osm_type"]), row["osm_id"]))
+    out(",\n".join(values))
+
+    out("\n     ) AS v(name, city, state, address, lon, lat, osm_type, osm_id)\n")
+    out("ON CONFLICT (osm_type, osm_id) DO NOTHING;\n")
 
 
 def main():
-    refresh = "--refresh" in sys.argv[1:]
-    report(load(refresh))
+    """No output path means report only.
 
+    The report is the cheap thing you run to see what is there. Writing the SQL
+    is the thing you do once you have decided, and it takes a path for the same
+    reason the TMDB script does: a shell redirect on PowerShell 5.1 writes
+    UTF-16LE and these names are full of non-ASCII.
+    """
+    arguments = sys.argv[1:]
+    refresh = "--refresh" in arguments
+    paths = [a for a in arguments if not a.startswith("--")]
+
+    rows, dropped = records(load(refresh))
+    kept = dedupe(rows)
+    report(rows, kept, dropped)
+
+    if not paths:
+        print("no output path given, so no SQL was written", file=sys.stderr)
+        return
+
+    destination = paths[0]
+    with open(destination, "w", encoding="utf-8", newline="\n") as handle:
+        write_sql(handle, kept)
+
+    print(f"wrote {len(kept)} cinemas to {destination}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

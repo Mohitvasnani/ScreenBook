@@ -118,17 +118,37 @@ class ShowtimeListingTest {
     /**
      * The branch that makes the 404 worth its extra query. A real cinema with
      * nothing on is an empty list, not a 404, and only the second query can
-     * tell the two apart. Every UK cinema is in this state in tests, because
-     * the seeder is switched off and V13 only seeded Jaipur.
+     * tell the two apart.
+     *
+     * Found by predicate rather than by name. The point is "a cinema that
+     * exists and has no screenings", and NOT EXISTS says exactly that, so this
+     * cannot pass vacuously against a cinema that quietly acquired a screening
+     * and cannot break when the ingestion adds rows. It used to ask for Odeon
+     * in Liverpool, which V25 turned into three cinemas: Paradise Street,
+     * Bromborough on the Wirral and one at Aintree, the last two tagged
+     * Liverpool because V25 assigns city by nearest centre.
      */
     @Test
     @DisplayName("a real cinema with no screenings is an empty list, not a 404")
     void emptyIsNotMissing() {
-        List<ShowtimeSummary> listing = showtimes.upcoming(cinemaId("Odeon", "Liverpool"), 12);
+        long emptyCinema = jdbc.sql("""
+                        SELECT ci.id
+                        FROM cinema ci
+                        WHERE NOT EXISTS (
+                                  SELECT 1
+                                  FROM showtime st
+                                  JOIN screen sc ON sc.id = st.screen_id
+                                  WHERE sc.cinema_id = ci.id)
+                        ORDER BY ci.id
+                        LIMIT 1
+                        """)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new AssertionError(
+                        "every cinema has a screening, so the empty branch has nothing to test with"));
 
-        assertEquals(List.of(), listing);
+        assertEquals(List.of(), showtimes.upcoming(emptyCinema, 12));
     }
-
     @Test
     @DisplayName("a cinema that does not exist is a 404")
     void unknownCinemaIsNotFound() {

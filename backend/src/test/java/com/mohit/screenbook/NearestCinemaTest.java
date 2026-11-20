@@ -140,12 +140,38 @@ class NearestCinemaTest {
         assertThrows(NotFoundException.class, () -> cinemas.detail(-1L));
     }
 
+    /**
+     * A fixture by name, with the uniqueness it depends on asserted rather
+     * than assumed.
+     *
+     * V24 made (osm_type, osm_id) the cinema's identity and dropped
+     * UNIQUE (city, name), because London has ten cinemas called Everyman and
+     * V25 has three called Odeon in Liverpool. A name and a city are still the
+     * readable way to name a fixture, so they stay, but .single() turning a
+     * second row into IncorrectResultSizeDataAccessException says nothing
+     * about why. This fails with the count and with what to do instead.
+     *
+     * The remaining fixtures, Cinepolis in Jaipur and Everyman in Liverpool,
+     * are unique today by luck rather than by constraint. The next ingestion
+     * is not obliged to keep it that way, and this is what will say so.
+     */
     private long cinemaId(String name, String city) {
-        return jdbc.sql("SELECT id FROM cinema WHERE name = :name AND city = :city")
+        List<Long> ids = jdbc.sql("""
+                        SELECT id FROM cinema
+                        WHERE name = :name AND city = :city
+                        ORDER BY id
+                        """)
                 .param("name", name)
                 .param("city", city)
                 .query(Long.class)
-                .single();
+                .list();
+
+        assertEquals(1, ids.size(), """
+                %d cinemas are called %s in %s, so a name and a city no longer identify one. \
+                V24 made (osm_type, osm_id) the identity: pin this fixture by OSM id instead.\
+                """.formatted(ids.size(), name, city));
+
+        return ids.getFirst();
     }
 
     /**
