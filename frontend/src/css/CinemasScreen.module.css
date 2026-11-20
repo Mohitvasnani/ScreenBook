@@ -56,6 +56,7 @@
   max-width: var(--page-max);
   margin: 0 auto;
   padding: 76px 24px 64px;
+  pointer-events: none;
 }
 
 .panelInner {
@@ -63,6 +64,9 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+.panelInner > * {
+  pointer-events: auto;
 }
 
 .eyebrow {
@@ -159,34 +163,58 @@
   color: var(--color-accent-deep);
 }
 
+/* A row of glass pills, matching the toggle above and the search box. These
+   were bare underlined text on the argument that the toggle and the chips
+   were the panel's controls and a third bordered thing would compete with
+   both. The chips are gone and that argument went with them. */
 .locate {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-/* A text button, not a bordered one. The toggle and the chips are the panel's
-   controls; a third bordered thing under them would compete with both. */
 .locateButton {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--color-accent-deep);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--color-n400);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 75%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--color-n700);
   font-size: 14px;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
   cursor: pointer;
+}
+
+.locateButton:hover {
+  border-color: var(--color-n500);
+  color: var(--color-ink);
+}
+
+.locateButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .locateButton:disabled {
   opacity: 0.6;
   cursor: default;
-  text-decoration: none;
 }
 
+/* The icon keeps the accent, so the row still carries the colour the
+   underlined text used to, without the whole label shouting. */
+.locateIcon {
+  flex: none;
+  color: var(--color-accent);
+}
+
+/* Its own line below the pills. This is a sentence, not an action. */
 .locateNote {
+  flex-basis: 100%;
   font-size: 13px;
   color: var(--color-n700);
 }

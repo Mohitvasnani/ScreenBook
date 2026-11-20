@@ -3,13 +3,14 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Fragment, useMemo, useState } from "react";
+import { CinemaSearch } from "@/components/CinemaSearch";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
 import styles from "@/css/CinemasScreen.module.css";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
-import type { Cinema, CinemasWithin, NearestCinema } from "@/types/api";
+import type { Cinema, CinemaCity, CinemasWithin, NearestCinema } from "@/types/api";
 import { distance, money } from "@/utils/format";
 import { MARKETS,  type Market } from "@/utils/markets";
 
@@ -24,9 +25,11 @@ const CinemaMap = dynamic(
 );
 
 
-/* Five, plus All cities. A chip is a shortcut, and a page full of shortcuts
-   is a list. */
-const CHIP_LIMIT = 5;
+/* The chips that used to live here are gone. They were five shortcuts plus
+   "All cities", which was a reasonable row at 130 cinemas and stopped being
+   one at 980: London alone has 127, so a shortcut to a city is no longer a
+   shortcut to a readable list. The search box does the same job without
+   claiming five cities matter more than the other thirty-five. */
 /* Three radii, and 10km is the middle one because that is also
    screenbook.cinemas.within-default-metres. The control and the server's
    default agree, so the first fetch is not a different question from the one
@@ -84,6 +87,13 @@ function groupByCity(cinemas: Cinema[]): [string, Cinema[]][] {
 export function CinemasScreen() {
   const { data, error, loading, reload } = useApi(() => api.listCinemas(), "cinemas");
 
+  /* 40 rows against 980, and it carries each city's centroid, so one fetch
+     answers both halves of search: what to offer, and where to centre a
+     radius when the viewer picks one. The browser used to compute those
+     centroids itself from the full list, which is the reason the full list
+     had to be here at all. */
+  const { data: cityRows } = useApi(() => api.cinemaCities(), "cities");
+
   /* Null is the opening state, not a missing value: no country chosen, the
      whole planet on screen, and both countries in the list. */
   const [market, setMarket] = useState<Market | null>(null);
@@ -98,7 +108,13 @@ export function CinemasScreen() {
      triggers; the radius is a value they change afterwards. Holding them
      together would mean re-prompting the browser on every radius press, which
      is both slower and, after a declined permission, impossible. */
-  const [origin, setOrigin] = useState<{ lat: number; lon: number } | null>(null);
+  /* The origin carries its own label. "Within 10 km of you" and "within 10 km
+     of Hyderabad" are different sentences, and deriving which one to say by
+     comparing coordinates back against the city list would be guessing at
+     something the action already knew. */
+  const [origin, setOrigin] = useState<
+    { lat: number; lon: number; label: string } | null
+  >(null);
   const [radius, setRadius] = useState<number>(10_000);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -133,6 +149,7 @@ export function CinemasScreen() {
       setOrigin({
         lat: position.coords.latitude,
         lon: position.coords.longitude,
+        label: "you",
       });
     } catch (failure) {
       setOrigin(null);
@@ -153,6 +170,7 @@ export function CinemasScreen() {
     const leaving = next === market;
     setMarket(leaving ? null : next);
     setCity(null);
+    setOrigin(null);
     setFocus("selection");
   }
 
@@ -161,11 +179,21 @@ export function CinemasScreen() {
      they would not if the country stayed unset. */
   function chooseCity(name: string) {
     setCity(name);
+    setOrigin(null);
     setFocus("selection");
     if (market === null) {
       const found = (data ?? []).find((cinema) => cinema.city === name);
       if (found) setMarket(found.country);
     }
+  }
+
+  /* Picking from search already knows the country, so unlike chooseCity it
+     does not have to find a cinema to work it out. */
+  function chooseCityRow(row: CinemaCity) {
+    setMarket(row.country);
+    setCity(row.city);
+    setOrigin(null);
+    setFocus("selection");
   }
 
   const inMarket = useMemo(
@@ -182,19 +210,19 @@ export function CinemasScreen() {
     [within],
   );
 
-  /* The cities with the most cinemas, not the first five alphabetically. A
-     shortcut to Agra's two screens is not worth the pixel, and ties break on
-     the name so the row does not reshuffle between loads. */
-  const chipCities = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const cinema of inMarket) {
-      counts.set(cinema.city, (counts.get(cinema.city) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, CHIP_LIMIT)
-      .map(([name]) => name);
-  }, [inMarket]);
+  const cities = useMemo(() => cityRows ?? [], [cityRows]);
+
+  /* The row behind the chosen city, which is what holds its centroid. Scoped
+     by market as well as name because two cities can share a name across the
+     two countries, and the one the viewer is looking at is the one in the
+     country they chose. */
+  const selectedCityRow = useMemo<CinemaCity | null>(
+    () =>
+      cities.find(
+        (row) => row.city === city && (market === null || row.country === market),
+      ) ?? null,
+    [cities, city, market],
+  );
 
   const visible = city === null ? inMarket : inMarket.filter((c) => c.city === city);
 
@@ -277,48 +305,71 @@ export function CinemasScreen() {
               ))}
             </div>
 
-            {/* No country, no chips. Thirty cities from two countries in one
-                row is not a shortcut. */}
-            {market !== null && (
-              <div className={styles.chips}>
-                {chipCities.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className={
-                      name === city ? `${styles.chip} ${styles.chipOn}` : styles.chip
-                    }
-                    aria-pressed={name === city}
-                    onClick={() => setCity(name === city ? null : name)}
-                  >
-                    {name}
-                  </button>
-                ))}
+            {/* Always available, unlike the chips it replaces, which needed a
+                country chosen first. Searching "Jaipur" from the opening
+                planet view is a reasonable thing to do and that row could not
+                answer it. */}
+            <CinemaSearch
+              cinemas={data ?? []}
+              cities={cities}
+              selectedCity={city}
+              onPickCity={chooseCityRow}
+            />
 
-                <button
-                  type="button"
-                  className={
-                    city === null
-                      ? `${styles.chip} ${styles.chipAll} ${styles.chipOn}`
-                      : `${styles.chip} ${styles.chipAll}`
-                  }
-                  aria-pressed={city === null}
-                  onClick={() => setCity(null)}
-                >
-                  All cities
-                </button>
-              </div>
-            )}
-
-                         <div className={styles.locate}>
-              <button
+            <div className={styles.locate}>
+                            <button
                 type="button"
                 className={styles.locateButton}
                 onClick={locate}
                 disabled={locating}
               >
+                {/* Inline, the way the footer's links carry theirs, rather
+                    than an icon font or a dependency. aria-hidden because the
+                    label beside it already says what this does. */}
+                <svg
+                  aria-hidden
+                  className={styles.locateIcon}
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20 10c0 5-8 12-8 12s-8-7-8-12a8 8 0 0 1 16 0Z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
                 {locating ? "Finding you..." : "Use my location"}
               </button>
+
+              {/* The manual origin, and deliberately a separate action from
+                  picking the city. One action, one effect: choosing a city to
+                  browse should never silently put the page into radius mode.
+
+                  It is also the thing that makes a radius usable by someone
+                  who is not standing in it. Looking at what is on within 10km
+                  of Jaipur from a desk in Liverpool is a real thing to want,
+                  and it was impossible while the only origin was the device's
+                  own GPS. */}
+              {selectedCityRow && (
+                <button
+                  type="button"
+                  className={styles.locateButton}
+                  onClick={() => {
+                    setLocationError(null);
+                    setFocus("radius");
+                    setOrigin({
+                      lat: selectedCityRow.latitude,
+                      lon: selectedCityRow.longitude,
+                      label: selectedCityRow.city,
+                    });
+                  }}
+                >
+                  Search around {selectedCityRow.city}
+                </button>
+              )}
 
               {/* Wave 6 left no way back to the planet except the country
                   toggle, and pressing the chip for the city you are already in
@@ -392,7 +443,7 @@ export function CinemasScreen() {
                 {origin !== null && (
           <section className={styles.group}>
             <h2 className={styles.groupTitle}>
-              Within {radius / 1000} km of you
+              Within {radius / 1000} km of {origin.label}
             </h2>
 
             {withinLoading && (

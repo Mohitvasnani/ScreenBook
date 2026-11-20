@@ -203,18 +203,41 @@ price.
 
 ## Where the data comes from
 
-The cinemas are real. 130 of them across 40 cities, 103 in India and 27 in the
-UK, from OpenStreetMap via Nominatim. Names, coordinates and addresses are
-genuine and every row carries its OSM node or way id in a comment, so any of
-them can be checked. Coverage is uneven on purpose: six cinemas in Kolkata, one
-in Chandigarh, none in Chennai. That is a real gap in open data, and filling it
-with invented rows would hide the only interesting thing about using a real
-source.
+The cinemas are real. 980 of them across 40 cities, from OpenStreetMap via
+Overpass. Names and coordinates are genuine, and every row carries its OSM type
+and id as a column rather than a comment, so any of them can be looked up and
+re-running the ingestion is idempotent instead of a hand merge.
+
+It started at 130, from Nominatim, and that number turned out to be an artefact
+of the tool rather than a statement about the data. Nominatim is a geocoder: it
+ranks its answers and caps them, because it exists to answer "which one did you
+mean". Overpass is the bulk query interface to the same database and returns
+everything tagged. The first number is what a geocoder will give you. The
+second is what is actually there.
+
+Two thirds of those rows have no address, and the column is nullable rather
+than filled in. Bulk reverse geocoding through Nominatim is against their usage
+policy, a commercial geocoder would dress a vendor's guess from coordinates up
+as something a mapper wrote, and composing "Jaipur, Rajasthan" out of the city
+column would be inventing data. The map already answers where a building is,
+exactly, and the API already sends the distance. Dropping the unaddressed rows
+was the other option and it is worse on the numbers: India is 23% addressed
+against the UK's 83%, so it would have left the smaller market better covered
+than the bigger one and baked a Western mapping bias into the dataset.
+
+Identity comes from the data's own id, not from a name somebody retyped. London
+has ten cinemas called Everyman and Bengaluru six called PVR Cinemas, so the
+original `UNIQUE (city, name)` would have rejected about 89 of these rows. The
+unique key is `(osm_type, osm_id)`, which is what makes "just run the script
+again" a real loop.
 
 Everything else is generated and labelled as such. No chain publishes seat maps
-or showtimes in a form anyone can use, so the 240 screens, 33,752 seats and all
-the prices are invented. A varied room layout gives the identical concurrency
-problem whether it was scraped or generated.
+or showtimes in a form anyone can use, so the rooms and all the prices are
+invented: about 1,800 screens and a quarter of a million seats, built by a rule
+rather than by a list. A chain name gets three screens, Raj Mandir gets its one
+famous auditorium, everything else gets one or two off its id, and the row and
+column counts follow from the aisle pattern. A varied room layout gives the
+identical concurrency problem whether it was scraped or generated.
 
 Cinema data © OpenStreetMap contributors, available under the
 [Open Database License](https://www.openstreetmap.org/copyright).
@@ -229,6 +252,16 @@ which is also why the API sends a poster path rather than a URL: the size
 belongs to whatever is rendering it, and baking one in would make changing a
 thumbnail an API change.
 
+Films are scoped to where they were released. `film_region` is keyed
+`(region, film_id)`, and that column order is the decision worth defending: the
+only reader asks "every film showing in GB", and the btree behind the key is
+only usable for a predicate on its leading column. The seeder's ring is then
+one ring per territory rather than one for the world, partitioned with
+`row_number() OVER (PARTITION BY fr.region ...)`, so Liverpool never advertises
+a film that opened only in India and Jaipur never advertises one that opened
+only in the UK. Territory, not "regional": in Indian cinema regional means the
+non-Hindi language industries, which is a different axis entirely.
+
 The home page is a globe. MapLibre's globe projection over MapTiler tiles, with
 one accent pin per city, and a camera with a single rule: frame whatever was
 asked about. Choosing a country frames that country's cinemas, choosing a city
@@ -239,6 +272,25 @@ project. The countries the dataset covers are revealed rather than drawn:
 everything else is washed out in the page background, and the wash fades as you
 descend. The whole view was built over an API that did not change, which is the
 argument for the API having been designed rather than grown.
+
+What it has gained since is a radius. "Use my location", or any city picked
+from the search box, sets an origin; a 5, 10 or 15km control sets a distance;
+and the server answers with `ST_DWithin` against the GiST index, returning the
+cinemas inside it and the cheapest price on sale at each. The circle is a real
+geodesic ring of 96 points on the same sphere model PostGIS measures with, so
+the boundary that is drawn and the boundary that is tested are the same
+boundary, and the same points frame the camera. Cinemas outside it are dimmed
+rather than removed, because one you will not drive to is still worth knowing
+is there. An empty radius answers with the nearest cinema outside it and its
+price, so the page can say "nothing within 10km, the closest is 34km away and
+from 850" instead of showing an empty circle.
+
+The origin does not have to be where you are standing. That is the same feature
+as the search box, not a second one: picking a city gives the radius somewhere
+to be centred, which is what lets you look at what is on near Jaipur from a desk
+in Liverpool. Pitch is a ramp rather than a constant, and the radius view is
+flat on purpose: a tilted circle draws half again as wide as it is tall, which
+would be untrue about the one number that view exists to set.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
@@ -299,13 +351,15 @@ that there is no lazy loading anywhere, so N+1 queries and
 
 ## API
 
-Nineteen endpoints. Full contract in
+Twenty-one endpoints. Full contract in
 [docs/api-contract.md](docs/api-contract.md).
 
 | | |
 |---|---|
-| `GET /api/cinemas` | every cinema, with coordinates, for the map |
+| `GET /api/cinemas` | every cinema, with coordinates, for the map; `?country=` to filter |
+| `GET /api/cinemas/cities` | one row per city with a count and a centroid, which is what the globe draws |
 | `GET /api/cinemas/nearest` | the nearest few to a point, from one indexed query |
+| `GET /api/cinemas/within` | everything inside a radius with its cheapest price, or the nearest cinema outside it |
 | `GET /api/cinemas/{id}` | one cinema, with its address and its own timezone |
 | `GET /api/showtimes?cinemaId=` | upcoming screenings at one cinema, with live seat counts |
 | `GET /api/showtimes/{id}` | one screening, for pages reached by URL alone |

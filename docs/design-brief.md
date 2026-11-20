@@ -27,6 +27,14 @@ one-file change.
 `#16181e`, ink `#f2eee6`. No light mode: a booking screen is read in a dark
 room, and a second theme doubles every state there is to check.
 
+**The mark** is a cinema screen: a curved accent arc over a rounded cream body,
+in the same two tokens as everything else. It ships as `src/app/icon.svg` and
+`apple-icon.png`, as a horizontal lockup at `public/logo.svg` for the footer,
+and as an Open Graph card at `src/app/opengraph-image.png`, which is the one
+that matters most given where this project gets shared. The source files each
+carried 7.7KB of C2PA provenance metadata and it is stripped, because an asset
+on every page load should not be 94 percent signature.
+
 **Accent** `#ff7a59`, for identity and focus rings. Deliberately separate from
 the semantic state colours, so "the brand colour" and "this went wrong" can
 never be the same decision.
@@ -56,9 +64,16 @@ read: there are over six thousand upcoming screenings across two countries.
 
 **Shows:** a full-bleed hero with a globe on the right, running off the edge of
 the screen, and a panel on the left carrying an eyebrow, the heading, a
-two-country toggle and a row of city chips. Under it, the same cinemas as a
-list: grouped by country then city when no country is chosen, by city when one
-is.
+two-country toggle, a search box and a row of glass controls. Under it, the
+same cinemas as a list: grouped by country then city when no country is chosen,
+by city when one is.
+
+**The city chips are gone, and the search box replaced them.** Five shortcuts
+plus "All cities" was a reasonable row at 130 cinemas. At 980 it stopped being
+one: London alone has 127, so a shortcut to a city no longer leads to a list
+anybody scrolls, and picking five cities out of forty claims a ranking the data
+does not support. The search box does the same job without the claim, and it
+works with no country chosen, which the chips never did.
 
 **The globe is a MapLibre map, not an image.** Globe projection over MapTiler's
 dataviz-dark, with every country that is not GB or IN washed out in the page
@@ -66,17 +81,45 @@ background and the wash fading as you zoom. One accent pin per city, labelled
 in a nine-patch chip, handing over to individual cinemas at z8.
 
 **Action:** choose a country and the camera frames that whole country. Choose a
-city, from a chip or from the globe itself, and it frames that city's cinemas.
-Click a cinema and it flies to its street and names it in a popup, with a link
-onward to what is on there. Press the chosen country again to go back out to
-the planet.
+city, from the search box or from the globe itself, and it frames that city's
+cinemas. Click a cinema and it flies to its street and names it in a popup,
+with a link onward to what is on there. "Back to the globe" clears everything,
+which is the only honest back when the camera is driven from state.
+
+**Search does two different things on purpose.** A city filters the page. A
+cinema navigates to it. That contradicts the map, where clicking a dot opens a
+popup rather than leaving the page, and the contradiction is the point: a dot
+can be hit by accident, a name you typed and then pressed cannot.
+
+**The radius.** An origin plus a distance of 5, 10 or 15km. The origin is
+either the device's location or, once a city is chosen, that city, offered as
+its own button rather than as a side effect of picking the city: one action,
+one effect, so browsing a city never silently puts the page into radius mode.
+It is also what makes the feature usable by somebody not standing in it, which
+is most people looking at a portfolio project. Inside the radius the cinemas
+carry a distance and a from-price; outside it they are dimmed rather than
+removed, because a cinema you will not drive to is still worth knowing is
+there. An empty radius names the nearest cinema outside it instead of showing
+an empty circle. Choosing a different place retires the radius rather than
+leaving a panel reporting somewhere you have left.
 
 **The camera has one rule:** frame what was asked about, derived from the same
-rows the list is built from. Only the opening planet is a fixed camera, because
-it is deliberately framing nothing.
+rows the list is built from. A country frames that country's cinemas, a city
+frames that city's, a radius frames its own ring. Only the opening planet is a
+fixed camera, because it is deliberately framing nothing.
+
+**Pitch is a ramp, not a constant.** The planet and a country take none, a city
+takes 35 degrees, a street takes 50. Pitch is for arrival: the planet is an
+object you look at and a country is a map you read, and neither is improved by
+perspective. `fitBounds` also solves for a trapezoid under pitch and does it
+only approximately, which over a country the size of India was enough to push
+it into the corner of the frame. A radius takes none for a third reason: the
+circle is a measurement, and at 42 degrees a 5km one draws half again as wide
+as it is tall.
 
 **States:** nothing chosen (planet, both countries listed), country, city,
-cinema. Plus loading, error with retry, and a declined geolocation permission,
+cinema, radius. Plus loading, error with retry, an empty radius, and a declined
+geolocation permission,
 which is a quiet line of text rather than an error because the list underneath
 is a complete way to use the site.
 
@@ -203,7 +246,7 @@ reachable by their reference.
 |---|---|---|---|
 | `SiteHeader` | wordmark, mode badge, race demo link, account state | default, scrolled, guest, signed in, session unknown | built. The third auth state is the point: before the startup check lands, "no user" and "not yet known" are the same value, so the slot renders nothing rather than showing Sign in to someone already signed in |
 | `ModeBanner` | one line: mock data or live API | demo, live | built: sits above the sticky header, so it scrolls away |
-| `SiteFooter` | links to the repo and the API docs | one | built |
+| `SiteFooter` | three columns over a bottom bar: the lockup and strapline, project links, contact. ODbL and TMDB credits live in the bottom bar | one | built in wave 7. It was a single flex row, which put required licence text and navigation in the same undifferentiated sentence |
 
 ### Showtimes
 | Component | Role | States |
@@ -254,6 +297,7 @@ reachable by their reference.
 | `Skeleton` | loading placeholder shaped like the content it replaces | block, text | built |
 | `ErrorState` | load failed, shows the problem detail | with retry, without | built |
 | `EmptyState` | nothing to show, and that is the right answer | with action, without | built |
+| `CinemaSearch` | combobox over cities and cinemas, client-side | idle, typing, open with results, no match, city chosen | built in wave 7. A real combobox: `role="combobox"` with `aria-activedescendant` over a listbox, arrow keys, Enter, Escape. Closes on an outside press rather than on blur, because blur fires before the click that caused it and the pick would never land |
 
 Two rules these encode. Every `StatusPill` tone carries a glyph as well as a
 colour, so won and lost stay distinguishable in greyscale, to a colour-blind

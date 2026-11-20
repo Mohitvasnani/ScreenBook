@@ -23,11 +23,14 @@ construction rather than by discovery.
 - Prices move with demand. The showtimes list and the seat map quote live
   prices; a hold freezes its price and the booking charges that frozen figure
 
-Nineteen endpoints. Three are cinemas, added in wave 5, which is where a
-customer starts: the map, the nearest few, and one building. Eight are the
-booking flow: four doing the work, three `GET`s that exist
-so the client's URLs survive a page refresh, one releasing a hold early. The other eight are accounts: six added in wave 3, and password reset in
-wave 4.
+Twenty-one endpoints. Five are cinemas, which is where a customer starts: the
+map, the city rollup the globe draws, the nearest few, everything inside a
+radius, and one building. Three arrived in wave 5 and two in wave 7, when the
+dataset went from 130 cinemas to 980 and "every cinema in one response" stopped
+being a complete answer on its own. Eight are the booking flow: four doing the
+work, three `GET`s that exist so the client's URLs survive a page refresh, one
+releasing a hold early. The other eight are accounts: six added in wave 3, and
+password reset in wave 4.
 
 ---
 
@@ -128,7 +131,7 @@ the freeze they would be charged a number they were never shown.
 
 ## 1. `GET /api/cinemas`
 
-Every cinema, for the map and for the city picker to group.
+Every cinema, for the map and for the list below it to group by city.
 
 **200**
 
@@ -147,25 +150,78 @@ Every cinema, for the map and for the city picker to group.
 ]
 ```
 
-No pagination and no `city` parameter. 130 rows is one response, and the client
-already holds all of them to draw markers, so a city filter would be a second
-round trip for what a local `filter()` does.
+**Parameters**
+
+| name | required | notes |
+|---|---|---|
+| `country` | no | `GB` or `IN`. Absent means every cinema |
+
+No pagination. The map draws all of them at once, so paging would be a client
+asking for something it cannot use. 980 rows is about 160KB, which is the
+number this endpoint is judged on, and the answer to it is the city rollup in
+section 2 rather than a page size: the planet view needs 40 rows, not 980, and
+only asks for the full list once the camera is close enough for individual
+cinemas to be worth drawing.
+
+`country` is a filter rather than a required parameter, because the globe's
+opening state shows both markets at once. An unrecognised code is an empty list
+rather than a `400`: `cinema.country` is a foreign key to the `country` table,
+so the database already defines which codes exist, and re-checking that set in
+Java would be a second place to edit when a third market arrives. "Cinemas in
+ZZ" also has an honest answer, and it is none.
 
 `latitude` and `longitude` as two numbers rather than GeoJSON. A marker needs
 two numbers, and MapLibre takes them as `[lon, lat]`, so a `Point` wrapper would
 be a shape every client unwraps for nothing.
 
-No `address`. 130 addresses is most of this payload's weight and a marker does
-not show one. Section 3 has it.
+No `address`. Addresses are most of this payload's weight and a marker does not
+show one. Section 5 has it, and two thirds of these rows have no address at all.
 
 `screenCount` is the cinema's own screens, counted over a left join, so a cinema
 with none still appears on the map as a building that exists.
 
 ---
 
-## 2. `GET /api/cinemas/nearest`
+## 2. `GET /api/cinemas/cities`
 
-The nearest few to a point. This is what makes 130 buildings usable from
+One row per city: how many cinemas are in it and where its middle is. This is
+what the globe draws before it is close enough for individual cinemas to be
+worth rendering.
+
+**200**
+
+```json
+[
+  {
+    "country": "IN",
+    "state": "Telangana",
+    "city": "Hyderabad",
+    "cinemaCount": 112,
+    "latitude": 17.419,
+    "longitude": 78.456
+  }
+]
+```
+
+Grouped on country, state and city, not on city alone. Two cities can share a
+name across states and this does not merge them.
+
+The coordinates are the centroid of that city's own cinemas, not a gazetteer's
+idea of where the city is, so the pin sits where the data is. The browser used
+to compute exactly this over the full list of cinemas, which was the reason the
+full list had to be in the browser at all. Forty rows now answer the planet
+view.
+
+No `currency` and no screen count. A city is not a thing with a price or a
+screen. Its cinemas are, and they carry their own.
+
+Ordered by country then city, so no client has to sort it.
+
+---
+
+## 3. `GET /api/cinemas/nearest`
+
+The nearest few to a point. This is what makes 980 buildings usable from
 wherever the customer is standing.
 
 | | | |
@@ -187,15 +243,24 @@ wherever the customer is standing.
     "longitude": -2.98644,
     "currency": "GBP",
     "screenCount": 3,
-    "distanceMetres": 718
+    "distanceMetres": 718,
+    "fromPriceMinor": 990
   }
 ]
 ```
 
 `ORDER BY location <-> point LIMIT n` against the GiST index, so this walks the
-index nearest-first and stops, rather than computing 130 distances and sorting
-them. At 130 rows that saves nothing; the index is there for the shape of the
-query.
+index nearest-first and stops, rather than computing 980 distances and sorting
+them. At 130 rows that saved nothing and the index was there for the shape of
+the query. At 980 it has started to earn its keep.
+
+`country` is on the row because `cinema.country` is a column as of wave 7.
+Before that the client inferred it from the currency, which happened to agree
+and was not the same question.
+
+`fromPriceMinor` is the cheapest seat on sale at that cinema inside the
+from-price window, and `null` when there is no screening in it. Section 4
+explains why it cannot be a SQL aggregate.
 
 The ordering and the reported distance use the same sphere model. `ST_Distance`
 defaults to the spheroid and the `<->` operator does not, and mixing them lets a
@@ -206,10 +271,13 @@ this range is a few metres.
 precision on the position of a building is noise, so it is rounded once, here,
 rather than by every client.
 
-No radius parameter. "The nearest five" is always answerable and a radius is
-not: 50km finds four cinemas from Liverpool and none from a village, and an
-empty list is a worse answer than a long drive. The distance is reported and
-the customer judges.
+No radius parameter here, and that is section 4's job rather than a missing
+one. "The nearest five" is always answerable and a radius is not: 50km finds
+plenty from Liverpool and none from a village, and an empty list is a worse
+answer than a long drive. This endpoint reports the distance and lets the
+customer judge; section 4 takes the other path and answers an empty radius with
+the nearest cinema outside it, which is the same reasoning honoured rather than
+dodged.
 
 A `limit` above the cap is clamped rather than rejected. A client that does not
 know the cap should get an answer, not an error it has to guess its way out of.
@@ -220,7 +288,102 @@ Spring's own parameter binding, in the same problem+json shape.
 
 ---
 
-## 3. `GET /api/cinemas/{cinemaId}`
+## 4. `GET /api/cinemas/within`
+
+Every cinema inside a radius, with the cheapest price on sale at each. When
+there is nothing inside it, the nearest cinema outside it instead.
+
+**Parameters**
+
+| name | required | notes |
+|---|---|---|
+| `lat` | yes | -90 to 90 |
+| `lon` | yes | -180 to 180 |
+| `metres` | no | default 10000, clamped to 50000 |
+
+**200**
+
+```json
+{
+  "radiusMetres": 10000,
+  "cinemas": [
+    {
+      "id": 42,
+      "name": "Everyman",
+      "city": "Liverpool",
+      "state": "England",
+      "country": "GB",
+      "latitude": 53.407184,
+      "longitude": -2.98644,
+      "currency": "GBP",
+      "screenCount": 3,
+      "distanceMetres": 580,
+      "fromPriceMinor": 990
+    }
+  ],
+  "nearestOutside": null
+}
+```
+
+An object rather than the bare array section 3 returns, because there are two
+things to say here and only one of them is a list.
+
+`ST_DWithin`, not a `WHERE` on `ST_Distance`. They return the same rows, but
+`ST_DWithin` is index-aware: it rewrites into a bounding box the GiST index can
+answer and checks true distances only on what survives. A `WHERE` on
+`ST_Distance` computes a real distance for every cinema and filters afterwards,
+which is a sequential scan wearing a radius.
+
+`use_spheroid` is false, to agree with the KNN ordering section 3 uses. Left at
+its default the boundary would be drawn on a spheroid while the distance
+printed beside it was measured on a sphere. They differ by about 0.3 percent,
+so roughly five metres at 1.5km, and a cinema sitting on the line would appear
+in the list reporting a distance larger than the radius that found it.
+
+`radiusMetres` is what was used, not what was asked for. Clamped rather than
+rejected, for the same reason `limit` is clamped on section 3: asking for 500km
+is a client that does not know the cap, not a mistake, and the honest answer is
+as far as we will look. Echoing it back is what stops that client drawing a
+circle that does not match the rows inside it.
+
+`nearestOutside` is non-null only when `cinemas` is empty. It exists so an
+empty radius can be answered with "nothing within 10km, the closest is 34km
+away and from 850" instead of a blank panel. It is a second query, and it runs
+only in the case that had nothing to render, so its latency is free. Folding it
+into one statement with a window function would pay for it on every call to
+save it on the rare one.
+
+### Why the from-price is not a SQL aggregate
+
+`fromPriceMinor` is the cheapest seat actually on sale at that cinema inside a
+24 hour window, in the currency the row already names, and `null` means there
+is no screening in that window. Both geography endpoints price their rows, so a
+`null` never means "this endpoint does not answer that".
+
+It is the price **after** the pricing rules, not the base price, and that is
+why it cannot be a `min()` in SQL. The five rules key off occupancy, lead time,
+time of day, day of week and weeks since release, all of which live in the
+application. SQL can only answer with the price before any of them has applied,
+and a "from" figure 40 percent under what anyone is actually charged is worse
+than no figure at all.
+
+So the database hands over the ingredients and the application does the
+arithmetic: one row per screening with the cheapest tier's base price and the
+five rule inputs, `priceFor` over each, then a minimum per cinema. Two things
+make that cheap. All five rules are screening-level rather than seat-level, so
+the cheapest seat at a screening is always the cheapest tier and one row per
+screening is enough. And the window is bounded: "cheapest today" is what
+somebody deciding where to go tonight is asking, and unbounded a 15km radius in
+London would price two thousand rows to display twenty numbers.
+
+Both queries run inside one read-only transaction and share one clock reading,
+so the window and the lead-time rule are decided by the same instant and a
+cinema whose only screening starts between the two queries cannot be listed
+with no price having had one a millisecond earlier.
+
+---
+
+## 5. `GET /api/cinemas/{cinemaId}`
 
 One cinema.
 
@@ -241,6 +404,14 @@ One cinema.
 }
 ```
 
+`address` is nullable. Two thirds of the OpenStreetMap rows carry no `addr:*`
+tags at all, and the alternatives were worse: bulk reverse geocoding through
+Nominatim is against their usage policy, a commercial geocoder would present a
+vendor's guess from coordinates as though a mapper had written it, and
+composing one out of the city column would be inventing data. A client should
+render the coordinates or the distance when it is absent, both of which the API
+already sends.
+
 `timezone` is sent because showtimes are formatted in the cinema's local time,
 not the browser's. Someone in Liverpool looking at Jaipur should see 20:00,
 which is when the film starts for the people in the room, and `startsAt` is an
@@ -253,7 +424,7 @@ list already carries `screenName`.
 
 ---
 
-## 4. `GET /api/showtimes`
+## 6. `GET /api/showtimes`
 
 What is on at one cinema.
 
@@ -282,11 +453,11 @@ What is on at one cinema.
 ]
 ```
 
-`cinemaId` is required and has no default. There is no sensible one. The 130
-cinemas have 6,366 upcoming screenings between them, so the twelve soonest on
-earth are four arbitrary buildings in two countries and nobody's listing. "What
-is on near me" is answered by choosing a cinema first, which is what sections 1
-and 2 are for.
+`cinemaId` is required and has no default. There is no sensible one. The 980
+cinemas have tens of thousands of upcoming screenings between them, so the
+twelve soonest on earth are a handful of arbitrary buildings in two countries
+and nobody's listing. "What is on near me" is answered by choosing a cinema
+first, which is what sections 1 to 4 are for.
 
 Three different answers, kept distinct. A cinema that exists with nothing
 scheduled is an empty list. An id no cinema has is a **404** `not-found`. A
@@ -321,7 +492,7 @@ nothing else, so without this field a page has no route back to the building.
 
 ---
 
-## 5. `GET /api/showtimes/{showtimeId}`
+## 7. `GET /api/showtimes/{showtimeId}`
 
 One screening.
 
@@ -346,7 +517,7 @@ hold exists.
 
 ---
 
-## 6. `GET /api/showtimes/{showtimeId}/seats`
+## 8. `GET /api/showtimes/{showtimeId}/seats`
 
 The seat map for one showtime.
 
@@ -478,7 +649,7 @@ and the other with a `CASE` per seat.
 
 ---
 
-## 7. `POST /api/holds`
+## 9. `POST /api/holds`
 
 Claim one to six seats for 300 seconds, all or nothing.
 
@@ -650,7 +821,7 @@ seat that has gone.
 
 ---
 
-## 8. `GET /api/holds/{holdId}`
+## 10. `GET /api/holds/{holdId}`
 
 Read a hold. Exists so the checkout page renders on a cold load rather than only
 when the user arrives by clicking.
@@ -701,7 +872,7 @@ is one tier.
 
 ---
 
-## 9. `POST /api/bookings`
+## 11. `POST /api/bookings`
 
 Convert a hold into a booking.
 
@@ -812,7 +983,7 @@ different hold. **404** unknown hold.
 
 ---
 
-## 10. `GET /api/bookings/{bookingReference}`
+## 12. `GET /api/bookings/{bookingReference}`
 
 Read a booking. Same body as above. **404** if unknown.
 
@@ -823,7 +994,7 @@ People read references out loud; UUIDs do not survive that.
 
 ---
 
-## 11. `DELETE /api/holds/{holdId}`
+## 13. `DELETE /api/holds/{holdId}`
 
 Release a hold before it expires.
 
@@ -839,7 +1010,7 @@ between a hold that models intent and one that just models a timeout.
 
 ---
 
-## 12. `POST /api/auth/signup`
+## 14. `POST /api/auth/signup`
 
 Create an account. Signing up signs you in, because redirecting to a login form
 you have just proved you can pass is friction for nothing.
@@ -891,7 +1062,7 @@ instead of quietly creating a second account for the same person.
 
 ---
 
-## 13. `POST /api/auth/login`
+## 15. `POST /api/auth/login`
 
 **Request**
 
@@ -914,7 +1085,7 @@ dummy hash, so the two cases cannot be separated by timing either.
 
 ---
 
-## 14. `POST /api/auth/refresh`
+## 16. `POST /api/auth/refresh`
 
 Exchange the refresh cookie for a new pair. No request body; reads `sb_refresh`.
 
@@ -945,7 +1116,7 @@ cost exists for low-entropy human passwords.
 
 ---
 
-## 15. `POST /api/auth/logout`
+## 17. `POST /api/auth/logout`
 
 No body. Reads `sb_refresh`, revokes it, clears both cookies.
 
@@ -954,7 +1125,7 @@ in is not an error, the same way releasing a lapsed hold is not.
 
 ---
 
-## 16. `POST /api/auth/forgot-password`
+## 18. `POST /api/auth/forgot-password`
 
 Starts a password reset.
 
@@ -1003,7 +1174,7 @@ to do.
 
 ---
 
-## 17. `POST /api/auth/reset-password`
+## 19. `POST /api/auth/reset-password`
 
 Finishes it.
 
@@ -1080,7 +1251,7 @@ one, and revoking again buys nothing.
 
 ---
 
-## 18. `GET /api/me`
+## 20. `GET /api/me`
 
 **200** the same body as signup. **401** with no valid session.
 
@@ -1091,7 +1262,7 @@ cache.
 
 ---
 
-## 19. `GET /api/me/bookings`
+## 21. `GET /api/me/bookings`
 
 Every booking belonging to the signed-in account, newest first.
 
