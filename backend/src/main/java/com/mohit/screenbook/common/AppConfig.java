@@ -8,14 +8,18 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import com.mohit.screenbook.catalogue.SeedProperties;
 import java.time.Clock;
+import com.mohit.screenbook.routing.RoutingProperties;
+import org.springframework.cache.annotation.EnableCaching;
 
 /**
  * Application-wide beans and the OpenAPI document's metadata.
  */
 @Configuration
+@EnableCaching
 @EnableConfigurationProperties({
         PricingProperties.class,
-        SeedProperties.class
+        SeedProperties.class,
+        RoutingProperties.class
 })
 @OpenAPIDefinition(info = @Info(
         title = "ScreenBook API",

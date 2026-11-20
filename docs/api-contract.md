@@ -23,11 +23,11 @@ construction rather than by discovery.
 - Prices move with demand. The showtimes list and the seat map quote live
   prices; a hold freezes its price and the booking charges that frozen figure
 
-Twenty-one endpoints. Five are cinemas, which is where a customer starts: the
+Twenty-two endpoints. Six are cinemas, which is where a customer starts: the
 map, the city rollup the globe draws, the nearest few, everything inside a
-radius, and one building. Three arrived in wave 5 and two in wave 7, when the
-dataset went from 130 cinemas to 980 and "every cinema in one response" stopped
-being a complete answer on its own. Eight are the booking flow: four doing the
+radius, one building, and the road to it. Three arrived in wave 5, two in wave 7,
+when the dataset went from 130 cinemas to 980 and "every cinema in one response"
+stopped being a complete answer on its own, and the road route in wave 8. Eight are the booking flow: four doing the
 work, three `GET`s that exist so the client's URLs survive a page refresh, one
 releasing a hold early. The other eight are accounts: six added in wave 3, and
 password reset in wave 4.
@@ -424,7 +424,64 @@ list already carries `screenName`.
 
 ---
 
-## 6. `GET /api/showtimes`
+## 6. `GET /api/cinemas/{cinemaId}/route`
+
+The road route from a point to one cinema. The client calls it on a click and
+never on a radius change: the provider's free tier is small, and three picks
+means three calls per interaction.
+
+| Param | | |
+|---|---|---|
+| `lat` | required | `-90` to `90` |
+| `lon` | required | `-180` to `180` |
+
+**200**
+
+```json
+{
+  "distanceMetres": 612,
+  "durationSeconds": 132,
+  "coordinates": [[-2.9916, 53.4084], [-2.9903, 53.4091], [-2.9889, 53.4077]]
+}
+```
+
+`coordinates` is longitude first, GeoJSON order, so a client hands it to MapLibre
+unchanged. The provider snaps both ends to the nearest road, so a client that
+wants the line to meet the pins puts the real origin and the cinema on the ends.
+
+**Why this is a proxy and not a browser call.** The key stays on the server, and
+one cache sits in front of every viewer instead of one per tab. The cost is that
+the API now depends on an outside service at request time, which is why every
+failure below is the same answer and the client has a fallback that needs
+nothing from it.
+
+**The origin is snapped before anything else happens.** `lat` and `lon` are
+rounded to three decimals, about 110 metres. The snapped point is the cache key
+and also the most the provider is ever told about where someone is, so a cached
+answer is exactly what the provider would have returned for the key. Answers are
+kept for 24 hours, capped at 10,000 entries, in process. A failure is never
+cached.
+
+**Only cinemas we hold.** The cinema id must exist, so this cannot be used to
+route between arbitrary places. It is unauthenticated and not rate limited yet,
+so a caller can still spend the provider's quota by varying the origin across
+cells. Rate limiting is wave 9's Redis work.
+
+**404** `not-found` for an unknown cinema, before the provider is called.
+
+**422** `validation-failed` for a latitude or longitude off the planet, also
+before the provider is called.
+
+**503** `routing-unavailable` for everything that is the provider's side: no key
+configured, the provider refused, it could not be reached within the timeouts
+(2 seconds to connect, 5 to read), or it returned no route. One type for all of
+them because the client's answer is the same: keep the straight line. With no
+key configured this is what a fresh clone returns, so nothing here needs an
+account to run.
+
+---
+
+## 7. `GET /api/showtimes`
 
 What is on at one cinema.
 
@@ -492,7 +549,7 @@ nothing else, so without this field a page has no route back to the building.
 
 ---
 
-## 7. `GET /api/showtimes/{showtimeId}`
+## 8. `GET /api/showtimes/{showtimeId}`
 
 One screening.
 
@@ -507,7 +564,7 @@ possible the moment a listing needed a cinema.
 No `starts_at` filter, unlike section 4, and that is the difference between the
 two. A listing shows what can still be booked. This answers what a screening
 is, so a confirmation page or a bookmarked seat map opened after the film
-started still renders. Whether it can be booked is section 7's answer, and that
+started still renders. Whether it can be booked is section 10's answer, and that
 rejects a started showtime with a **409**.
 
 Prices here are live, exactly as in the listing. A price is only promised once a
@@ -517,7 +574,7 @@ hold exists.
 
 ---
 
-## 8. `GET /api/showtimes/{showtimeId}/seats`
+## 9. `GET /api/showtimes/{showtimeId}/seats`
 
 The seat map for one showtime.
 
@@ -649,7 +706,7 @@ and the other with a `CASE` per seat.
 
 ---
 
-## 9. `POST /api/holds`
+## 10. `POST /api/holds`
 
 Claim one to six seats for 300 seconds, all or nothing.
 
@@ -821,7 +878,7 @@ seat that has gone.
 
 ---
 
-## 10. `GET /api/holds/{holdId}`
+## 11. `GET /api/holds/{holdId}`
 
 Read a hold. Exists so the checkout page renders on a cold load rather than only
 when the user arrives by clicking.
@@ -872,7 +929,7 @@ is one tier.
 
 ---
 
-## 11. `POST /api/bookings`
+## 12. `POST /api/bookings`
 
 Convert a hold into a booking.
 
@@ -892,7 +949,7 @@ decide which to trust.
 
 `email` is optional and exists for guests, who otherwise have nothing but the
 reference. It is stored so a confirmation can be sent and is never used to
-decide who a booking belongs to, for the reason in section 19. A signed-in
+decide who a booking belongs to, for the reason in section 22. A signed-in
 booking is found by its account instead, and the account comes from the session
 cookie rather than the body, because a client-supplied user id is a
 client-supplied claim about who it is.
@@ -983,7 +1040,7 @@ different hold. **404** unknown hold.
 
 ---
 
-## 12. `GET /api/bookings/{bookingReference}`
+## 13. `GET /api/bookings/{bookingReference}`
 
 Read a booking. Same body as above. **404** if unknown.
 
@@ -994,7 +1051,7 @@ People read references out loud; UUIDs do not survive that.
 
 ---
 
-## 13. `DELETE /api/holds/{holdId}`
+## 14. `DELETE /api/holds/{holdId}`
 
 Release a hold before it expires.
 
@@ -1010,7 +1067,7 @@ between a hold that models intent and one that just models a timeout.
 
 ---
 
-## 14. `POST /api/auth/signup`
+## 15. `POST /api/auth/signup`
 
 Create an account. Signing up signs you in, because redirecting to a login form
 you have just proved you can pass is friction for nothing.
@@ -1062,7 +1119,7 @@ instead of quietly creating a second account for the same person.
 
 ---
 
-## 15. `POST /api/auth/login`
+## 16. `POST /api/auth/login`
 
 **Request**
 
@@ -1085,7 +1142,7 @@ dummy hash, so the two cases cannot be separated by timing either.
 
 ---
 
-## 16. `POST /api/auth/refresh`
+## 17. `POST /api/auth/refresh`
 
 Exchange the refresh cookie for a new pair. No request body; reads `sb_refresh`.
 
@@ -1116,7 +1173,7 @@ cost exists for low-entropy human passwords.
 
 ---
 
-## 17. `POST /api/auth/logout`
+## 18. `POST /api/auth/logout`
 
 No body. Reads `sb_refresh`, revokes it, clears both cookies.
 
@@ -1125,7 +1182,7 @@ in is not an error, the same way releasing a lapsed hold is not.
 
 ---
 
-## 18. `POST /api/auth/forgot-password`
+## 19. `POST /api/auth/forgot-password`
 
 Starts a password reset.
 
@@ -1174,7 +1231,7 @@ to do.
 
 ---
 
-## 19. `POST /api/auth/reset-password`
+## 20. `POST /api/auth/reset-password`
 
 Finishes it.
 
@@ -1251,7 +1308,7 @@ one, and revoking again buys nothing.
 
 ---
 
-## 20. `GET /api/me`
+## 21. `GET /api/me`
 
 **200** the same body as signup. **401** with no valid session.
 
@@ -1262,7 +1319,7 @@ cache.
 
 ---
 
-## 21. `GET /api/me/bookings`
+## 22. `GET /api/me/bookings`
 
 Every booking belonging to the signed-in account, newest first.
 
@@ -1348,8 +1405,8 @@ Accounts change three things and nothing else.
 
 1. **The seat cap.** 3 seats per hold as a guest, 6 signed in.
 2. **Attribution.** A booking confirmed while signed in records `user_id` and
-   appears in section 19.
-3. **Nothing else.** Every endpoint in sections 1 to 7 behaves exactly as it did
+   appears in section 22.
+3. **Nothing else.** Every endpoint in sections 1 to 14 behaves exactly as it did
    without a session. Guest checkout is not a fallback path, it is the default
    one.
 
@@ -1377,7 +1434,7 @@ than gaps:
   409 or claims seats that lapse in five minutes. A duplicated booking is a
   seat somebody paid for twice.
 - **Email verification.** Nothing proves an address belongs to whoever typed
-  it, which is why section 19 matches on `user_id` and `booking_by_email` goes
+  it, which is why section 22 matches on `user_id` and `booking_by_email` goes
   unused. Completing a password reset does prove control of an address, but
   only for the accounts that reset, so a feature built on it would work for a
   minority of users and real verification would still be needed.

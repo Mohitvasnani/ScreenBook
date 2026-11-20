@@ -103,6 +103,20 @@ there. An empty radius names the nearest cinema outside it instead of showing
 an empty circle. Choosing a different place retires the radius rather than
 leaving a panel reporting somewhere you have left.
 
+**The routes.** With an origin and a radius, three cinemas get a line from the
+origin: nearest, cheapest and furthest, in three colours chosen to sit away from
+the accent, which is what every other cinema on the map already is. A cinema
+that wins two categories is one line, coloured by the first and named for both
+in the legend. The figure sits on the line as a label of its own rather than as
+text along the path, because MapLibre cuts a line at tile edges and repeats the
+text on every piece. The legend is the key, because three coloured lines with
+no key is a puzzle. Lines start straight, using the distance the API already
+sent. One button, "Show road routes", swaps in real geometry and adds a time,
+and it is the only thing on the page that waits on an outside service, so it is
+pressed and never triggered by dragging the radius. If it fails the legend says
+so in one line and the straight lines stay: the feature goes back to what it was
+rather than breaking.
+
 **The camera has one rule:** frame what was asked about, derived from the same
 rows the list is built from. A country frames that country's cinemas, a city
 frames that city's, a radius frames its own ring. Only the opening planet is a
@@ -118,8 +132,8 @@ circle is a measurement, and at 42 degrees a 5km one draws half again as wide
 as it is tall.
 
 **States:** nothing chosen (planet, both countries listed), country, city,
-cinema, radius. Plus loading, error with retry, an empty radius, and a declined
-geolocation permission,
+cinema, radius. Plus loading, error with retry, an empty radius, road routes
+loading and unavailable, and a declined geolocation permission,
 which is a quiet line of text rather than an error because the list underneath
 is a complete way to use the site.
 

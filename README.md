@@ -246,8 +246,11 @@ The films are real too. Sixty-seven of them, now playing in the UK and India,
 from TMDB: titles, runtimes, release dates and poster paths are theirs, and the
 screenings those films are shown at are generated. Ingestion runs once offline
 in `tools/tmdb_ingest.py` and its output is committed as a migration, so the
-running service never calls TMDB and keeps exactly one runtime third party,
-which is Brevo. Posters are hotlinked from TMDB's CDN and never re-hosted,
+running service never calls TMDB. It does call two others at request time,
+Brevo for reset mail and openrouteservice for road routes, and both are allowed
+to fail: a mail failure is swallowed so it cannot reveal which addresses have
+accounts, and a routing failure is a 503 the client answers by keeping a
+straight line. Posters are hotlinked from TMDB's CDN and never re-hosted,
 which is also why the API sends a poster path rather than a URL: the size
 belongs to whatever is rendering it, and baking one in would make changing a
 thumbnail an API change.
@@ -291,6 +294,20 @@ to be centred, which is what lets you look at what is on near Jaipur from a desk
 in Liverpool. Pitch is a ramp rather than a constant, and the radius view is
 flat on purpose: a tilted circle draws half again as wide as it is tall, which
 would be untrue about the one number that view exists to set.
+
+Inside a radius the page picks three cinemas, the nearest, the cheapest and the
+furthest, and draws a line to each in its own colour with a legend. A cinema that
+wins two categories gets one line, named for both. The lines start straight,
+using the distance the API already sent, so the feature costs no routing call.
+"Show road routes" fetches the real geometry and the figure becomes a distance
+and a time. That is the one request that goes through the server to an outside
+provider, so it happens on a click only, never on a radius change, and never for
+more than the three picks. It goes through the API rather than from the browser,
+which keeps the key off the client and puts one cache in front of every viewer:
+the origin is snapped to about 110 metres, which is both the cache key and the
+most the provider is told about where you are, and an answer is kept for a day.
+With no key configured, or the provider down, the endpoint answers 503 and the
+lines stay straight, so the map never depends on it.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
@@ -351,7 +368,7 @@ that there is no lazy loading anywhere, so N+1 queries and
 
 ## API
 
-Twenty-one endpoints. Full contract in
+Twenty-two endpoints. Full contract in
 [docs/api-contract.md](docs/api-contract.md).
 
 | | |
@@ -361,6 +378,7 @@ Twenty-one endpoints. Full contract in
 | `GET /api/cinemas/nearest` | the nearest few to a point, from one indexed query |
 | `GET /api/cinemas/within` | everything inside a radius with its cheapest price, or the nearest cinema outside it |
 | `GET /api/cinemas/{id}` | one cinema, with its address and its own timezone |
+| `GET /api/cinemas/{id}/route` | the road route to one cinema from a point, proxied from openrouteservice and cached; `503` when the provider is unavailable |
 | `GET /api/showtimes?cinemaId=` | upcoming screenings at one cinema, with live seat counts |
 | `GET /api/showtimes/{id}` | one screening, for pages reached by URL alone |
 | `GET /api/showtimes/{id}/seats` | the seat map, status computed per request |
@@ -447,7 +465,7 @@ Deferred with the reasoning recorded, so the omissions read as decisions.
   it, which is why my-bookings matches on `user_id` and never on email.
 - **Payment.** `pricePaidMinor` records the price at booking time. No money
   moves.
-- **GraphQL.** Nineteen fixed-shape resources with no over-fetching problem, and
+- **GraphQL.** Twenty-two fixed-shape resources with no over-fetching problem, and
   an error model that depends on the HTTP status codes GraphQL discards.
 
 ## Reversed on purpose
@@ -497,6 +515,7 @@ either half alone.
 | Database | PostgreSQL 18 with PostGIS 3.6, Flyway 12, HikariCP |
 | Frontend | Next.js 16.4, React 19, TypeScript, CSS Modules, MSW |
 | Maps | MapLibre GL JS 6 (globe projection), MapTiler vector tiles and Countries, OpenStreetMap data |
+| Routing | openrouteservice (driving-car), behind the API, cached with Caffeine |
 | Testing | JUnit 5, Testcontainers |
 | Docs | springdoc-openapi, Swagger UI |
 | Mail | Brevo, behind a `Mailer` interface with a logging implementation |

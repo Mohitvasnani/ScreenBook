@@ -1,4 +1,7 @@
 package com.mohit.screenbook.routing;
 
-public class RoutingProperties {
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "screenbook.routing")
+public record RoutingProperties(String apiKey, String baseUrl) {
 }
