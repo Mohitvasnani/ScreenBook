@@ -6,9 +6,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-
+import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.format.DateTimeFormatter;
+import java.util.Currency;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -32,6 +35,11 @@ public class BrevoMailer implements Mailer {
     private static final Logger log = LoggerFactory.getLogger(BrevoMailer.class);
 
     private static final String SEND_URL = "https://api.brevo.com/v3/smtp/email";
+
+    /* VV prints the zone id, so the time is never ambiguous between
+       the two markets. */
+    private static final DateTimeFormatter WHEN =
+            DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm (VV)", Locale.UK);
 
     private final RestClient http;
     private final String senderEmail;
@@ -73,26 +81,34 @@ public class BrevoMailer implements Mailer {
 
     @Override
     public void sendPasswordReset(String toEmail, String resetLink) {
+        send(toEmail, "Reset your ScreenBook password", text(resetLink), "Password reset");
+    }
+
+    @Override
+    public void sendBookingConfirmation(String toEmail, BookingConfirmation booking) {
+        send(toEmail, "Your ScreenBook booking " + booking.reference(),
+                confirmationText(booking), "Booking confirmation");
+    }
+
+    /* Any failure propagates, and each caller decides what a failure means.
+       Keeping that out of here is what leaves this transport honest about
+       whether it worked. */
+    private void send(String toEmail, String subject, String textContent, String kind) {
         Map<String, Object> body = Map.of(
                 "sender", Map.of("name", senderName, "email", senderEmail),
                 "to", List.of(Map.of("email", toEmail)),
-                "subject", "Reset your ScreenBook password",
-                "textContent", text(resetLink));
+                "subject", subject,
+                "textContent", textContent);
 
-        /* Any failure propagates, and PasswordResetService is what swallows it.
-           Keeping that decision there rather than here means the transport
-           stays honest about whether it worked, which is also what makes this
-           usable from anywhere else later. */
         Map<?, ?> response = http.post()
                 .body(body)
                 .retrieve()
                 .body(Map.class);
 
         /* Brevo returns a messageId, which is the only handle on the message
-           afterwards. Logged without the recipient: this line fires only for
-           addresses that exist, so including it would put a list of real users
-           in the logs. */
-        log.info("Password reset mail accepted by Brevo, messageId {}",
+           afterwards. Logged without the recipient, so the logs do not
+           become a list of real users. */
+        log.info("{} mail accepted by Brevo, messageId {}", kind,
                 response == null ? "unknown" : response.get("messageId"));
     }
 
@@ -112,5 +128,32 @@ public class BrevoMailer implements Mailer {
                 If that was not you, ignore this message. Nothing has changed and \
                 your current password still works.
                 """.formatted(Duration.ofMinutes(ttlMinutes).toMinutes(), resetLink);
+    }
+
+    private String confirmationText(BookingConfirmation b) {
+        return """
+                Your booking is confirmed.
+
+                %s
+                %s
+                %s
+
+                Seats: %s
+                Total: %s
+
+                Reference: %s
+                This page is your ticket, so keep the link:
+                %s
+                """.formatted(
+                b.filmTitle(), b.cinemaName(), WHEN.format(b.startsAt()),
+                String.join(", ", b.seats()), money(b.totalMinor(), b.currency()),
+                b.reference(), b.link());
+    }
+
+    /* Minor units to a plain amount, using the currency's own number of
+       decimals. */
+    private static String money(int minor, String currency) {
+        int digits = Currency.getInstance(currency).getDefaultFractionDigits();
+        return currency + " " + BigDecimal.valueOf(minor, digits).toPlainString();
     }
 }

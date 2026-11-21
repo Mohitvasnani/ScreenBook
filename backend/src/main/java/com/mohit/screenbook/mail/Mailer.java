@@ -14,4 +14,7 @@ package com.mohit.screenbook.mail;
 public interface Mailer {
 
     void sendPasswordReset(String toEmail, String resetLink);
+
+    /** Throws if the provider refuses. The caller decides what that means. */
+    void sendBookingConfirmation(String toEmail, BookingConfirmation booking);
 }

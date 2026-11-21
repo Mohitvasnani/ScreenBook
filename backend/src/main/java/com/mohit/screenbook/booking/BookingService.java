@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.context.ApplicationEventPublisher;
 
 @Service
 public class BookingService {
@@ -29,14 +30,17 @@ public class BookingService {
     private final BookingRepository bookings;
     private final BookingQuery bookingQuery;
     private final Clock clock;
+    private final ApplicationEventPublisher events;
 
     BookingService(SeatHoldRepository holds, SeatMapQuery seatMap,
-                   BookingRepository bookings, BookingQuery bookingQuery, Clock clock) {
+                   BookingRepository bookings, BookingQuery bookingQuery, Clock clock,
+                   ApplicationEventPublisher events) {
         this.holds = holds;
         this.seatMap = seatMap;
         this.bookings = bookings;
         this.bookingQuery = bookingQuery;
         this.clock = clock;
+        this.events = events;
     }
 
     /**
@@ -119,6 +123,10 @@ public class BookingService {
             throw new HoldAlreadyConvertedException(
                     "That hold has already been converted into a booking.");
         }
+
+        /* Published inside the transaction, delivered after it commits. A
+           rollback sends nothing. */
+        events.publishEvent(new BookingConfirmed(booking.getReference(), userId, email));
 
         return bookingQuery.byReference(booking.getReference());
     }

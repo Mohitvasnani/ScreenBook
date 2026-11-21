@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
-
+import com.mohit.screenbook.mail.BookingConfirmation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -57,6 +57,10 @@ class PasswordResetTest {
         @Override
         public void sendPasswordReset(String toEmail, String resetLink) {
             links.add(resetLink);
+        }
+
+        @Override
+        public void sendBookingConfirmation(String toEmail, BookingConfirmation booking) {
         }
 
         /* The token is url-safe Base64 with no padding, so it needs no

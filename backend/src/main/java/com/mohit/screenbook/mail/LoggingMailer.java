@@ -27,4 +27,9 @@ public class LoggingMailer implements Mailer {
     public void sendPasswordReset(String toEmail, String resetLink) {
         log.info("Password reset for {}: {}", toEmail, resetLink);
     }
+
+    @Override
+    public void sendBookingConfirmation(String toEmail, BookingConfirmation booking) {
+        log.info("Booking {} confirmed to {}: {}", booking.reference(), toEmail, booking.link());
+    }
 }

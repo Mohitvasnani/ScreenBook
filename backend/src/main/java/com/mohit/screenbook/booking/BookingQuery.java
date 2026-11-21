@@ -3,7 +3,7 @@ package com.mohit.screenbook.booking;
 import com.mohit.screenbook.common.NotFoundException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
-
+import java.time.ZoneId;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -84,6 +84,29 @@ public class BookingQuery {
                     "No booking with reference %s.".formatted(reference));
         }
         return fold(rows);
+    }
+
+
+    /**
+     * Where a screening is and which zone its clock is in, for anything that
+     * has to say when. starts_at is an instant; "19:30" only means something
+     * in the cinema's own zone.
+     */
+    Venue venueOf(long showtimeId) {
+        return jdbc.sql("""
+                        SELECT c.name, c.timezone
+                        FROM showtime st
+                        JOIN screen sc ON sc.id = st.screen_id
+                        JOIN cinema c  ON c.id  = sc.cinema_id
+                        WHERE st.id = :showtimeId
+                        """)
+                .param("showtimeId", showtimeId)
+                .query((rs, rowNum) -> new Venue(
+                        rs.getString("name"), ZoneId.of(rs.getString("timezone"))))
+                .single();
+    }
+
+    record Venue(String cinemaName, ZoneId zone) {
     }
 
     List<BookingResponse> forUser(UUID userId) {
