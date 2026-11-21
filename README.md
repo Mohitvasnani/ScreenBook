@@ -506,8 +506,9 @@ either half alone.
   seat" from a locking convention into the schema, where no future code path
   can bypass it. `released_at` already exists for its predicate.
 - **Hexagonal refactor** with ArchUnit enforcing the module boundaries.
-- **Redis** for distributed locking once the service is more than one process.
-- **Prometheus and Grafana**, and a load test with numbers.
+- **Redis** is in for rate limiting on the route endpoint. A distributed lock
+  is deliberately not planned: Postgres already fills that role.
+- **Prometheus and Grafana.** The load test is done, see `docs/load-test.md`.
 - **Kubernetes and Helm** on Oracle Cloud.
 
 ## Stack
@@ -519,6 +520,7 @@ either half alone.
 | Frontend | Next.js 16.4, React 19, TypeScript, CSS Modules, MSW |
 | Maps | MapLibre GL JS 6 (globe projection), MapTiler vector tiles and Countries, OpenStreetMap data |
 | Routing | openrouteservice (driving-car), behind the API, cached with Caffeine |
+| Rate limiting | Redis, a token bucket in one Lua script, in front of the routing provider |
 | Testing | JUnit 5, Testcontainers |
 | Docs | springdoc-openapi, Swagger UI |
 | Mail | Brevo, behind a `Mailer` interface with a logging implementation |

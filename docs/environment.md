@@ -165,6 +165,44 @@ thread. And the `routes` cache holds up to 10,000 entries for 24 hours, in
 process, so it empties on every restart, which on Render's free tier is every
 wake-up.
 
+### Redis and the rate limit
+
+`REDIS_URL` is a Redis connection string. Locally it defaults to
+`redis://localhost:6379`, which is the `redis` service in `docker-compose.yml`,
+so `docker compose up -d` starts it beside Postgres. On Render it will be the
+Upstash URL, set as a secret and never in a tracked file.
+
+Redis does one job: the token bucket in front of the route provider
+(`RateLimiter`, one Lua script, so the read, the refill and the take are one
+atomic step). The two numbers are
+`screenbook.ratelimit.routing.capacity` and `.refill-per-second`, 30 and 0.02.
+They are sized to the provider's free plan of 40 requests a minute and 2,000 a
+day: capacity under the per-minute limit, refill under the daily limit divided
+by 86,400.
+
+Four settings next to it each close a way this goes wrong.
+
+- **Redis timeouts are 250 ms**, for connecting and for commands. The limiter
+  sits on the request path, so a Redis that hangs must cost a request a quarter
+  of a second, not a thread.
+- **The limiter fails open.** If Redis cannot be reached the request goes
+  through. The bucket protects a quota, and an outage of the thing protecting it
+  should not take the feature down with it. Unset on Render, the default URL
+  points at nothing, so each provider-bound call pays the timeout and then
+  proceeds.
+- **`management.health.redis.enabled=false`.** Otherwise a Redis outage turns
+  `/actuator/health` to DOWN, Render restarts the service, and fail open is
+  defeated by the platform.
+- **`spring.cache.type=caffeine` is pinned.** With the Redis starter on the
+  classpath, Boot's cache auto-detection prefers Redis over Caffeine. Without
+  the pin the `routes` cache silently moved into Redis and a Redis outage broke
+  cached routes with a 500. Four `RoutingTest` cases caught it.
+
+The test suite points `spring.data.redis.url` at a closed port in
+`application-test.properties`, so ordinary tests never touch a developer's
+Redis on 6379 and never spend tokens from a real bucket. `RateLimiterTest`
+starts its own Redis in a Testcontainers container.
+
 ### The two with no default
 
 `JWT_SECRET` has no development fallback on purpose. A default is exactly the
@@ -200,6 +238,9 @@ COOKIES_SECURE=false
 
 Set these in the IntelliJ run configuration, or as user-level environment
 variables with a terminal and IDE restart afterwards so both inherit them.
+
+Postgres and Redis both come from `docker compose up -d`. With Redis stopped the
+app still runs and the route limiter fails open.
 
 The test suite needs none of them. `src/test/resources/application-test.properties`
 sets a fixed secret of its own so the suite does not depend on a developer

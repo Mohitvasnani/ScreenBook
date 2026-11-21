@@ -466,14 +466,26 @@ kept for 24 hours, capped at 10,000 entries, in process. A failure is never
 cached.
 
 **Only cinemas we hold.** The cinema id must exist, so this cannot be used to
-route between arbitrary places. It is unauthenticated and not rate limited yet,
-so a caller can still spend the provider's quota by varying the origin across
-cells. Rate limiting is wave 9's Redis work.
+route between arbitrary places. The endpoint is unauthenticated, so the
+provider's quota is protected by a token bucket in front of the provider call,
+described under 429 below.
 
 **404** `not-found` for an unknown cinema, before the provider is called.
 
 **422** `validation-failed` for a latitude or longitude off the planet, also
 before the provider is called.
+
+**429** `rate-limited` when the provider budget is spent. There is one bucket for
+the whole service, because the quota belongs to the API key and not to a caller:
+capacity 30, refilling 0.02 a second, sized to the provider's free plan of 40
+requests a minute and 2,000 a day. The check sits inside the cached method, just
+before the provider call, so only a request that would really cost a provider
+call spends a token. A cache hit never does, and the 404, the 422 and a missing
+key all come first and cost nothing. The response carries `Retry-After` in
+seconds, and `retryAfterSeconds` in the body. A 429 is an exception and is not
+cached, so the next request after the bucket refills goes through. If Redis
+cannot be reached the limiter fails open and the request proceeds. The client
+answers a 429 as it answers a 503, by keeping the straight line.
 
 **503** `routing-unavailable` for everything that is the provider's side: no key
 configured, the provider refused, it could not be reached within the timeouts
