@@ -184,8 +184,9 @@ already Friday in Jaipur while it is still Thursday in Liverpool.
 
 The seat map quotes live prices and promises nothing. The promise is made when
 a hold is taken, and at that moment the numbers are copied onto it: the listed
-price on `seat_hold`, the adjusted price per seat on `hold_seat`, and one row
-per rule on `hold_price_rule`. Confirming charges the copy.
+price of each tier on `hold_price_group` (a hold can span tiers, so the base
+is per tier), the adjusted price per seat on `hold_seat`, and one row per rule
+per tier on `hold_price_rule`. Confirming charges the copy.
 
 That is not caution. Occupancy is an input, so recomputing at confirm returns
 a different number whenever somebody else books while the customer is typing
@@ -382,7 +383,7 @@ Twenty-two endpoints. Full contract in
 | `GET /api/showtimes?cinemaId=` | upcoming screenings at one cinema, with live seat counts |
 | `GET /api/showtimes/{id}` | one screening, for pages reached by URL alone |
 | `GET /api/showtimes/{id}/seats` | the seat map, status computed per request |
-| `POST /api/holds` | claim adjacent seats for 300 seconds, three as a guest and six signed in |
+| `POST /api/holds` | claim seats for 300 seconds, up to five as a guest and ten signed in |
 | `GET /api/holds/{id}` | read a hold and its remaining time |
 | `DELETE /api/holds/{id}` | release early |
 | `POST /api/bookings` | convert a hold into a booking |

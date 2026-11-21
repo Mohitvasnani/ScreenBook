@@ -14,7 +14,7 @@ import { api } from "@/services/apiClient";
 import { MAX_SEATS_MEMBER } from "@/services/apiConfig";
 import { ApiError } from "@/services/problemDetails";
 import type { Seat, UnavailableSeat } from "@/types/api";
-import { extendsRun, isRunEnd } from "@/utils/adjacency";
+
 import { dayAndTime, money, seatNames } from "@/utils/format";
 import { Poster } from "@/components/Poster";
 
@@ -76,41 +76,20 @@ export function SeatSelectionScreen() {
     setLost([]);
     setProblem(null);
 
+        /* Tapping a chosen seat takes it off. Any seat, not only the ends: seats
+       do not have to be next to each other, so removing one from the middle
+       leaves a valid selection. */
     if (selectedIds.has(seat.id)) {
-      /* Only the ends come off, because removing from the middle would split
-         the run in two. Tapping a middle seat starts again from there, the
-         same thing tapping any non-adjacent seat does. */
-      if (isRunEnd(selected, seat)) {
-        setSelected(selected.filter((s) => s.id !== seat.id));
-        setNote(null);
-      } else {
-        setSelected([seat]);
-        setNote(
-          `Started again at ${seat.rowLabel}${seat.seatNumber}. Seats have to stay in one unbroken row.`,
-        );
-      }
-      return;
-    }
-    
-
-    if (!extendsRun(selected, seat)) {
-      /* Not next to what is already chosen. Starting a new selection there is
-         friendlier than refusing the tap, and it is what the person almost
-         certainly meant if they tapped somewhere else entirely. */
-      setSelected([seat]);
-      setNote(
-        selected.length > 0
-          ? `Started again at ${seat.rowLabel}${seat.seatNumber}. Seats have to be next to each other in one row.`
-          : null,
-      );
+      setSelected(selected.filter((s) => s.id !== seat.id));
+      setNote(null);
       return;
     }
 
     if (selected.length >= maxSeats) {
       setNote(
         user
-          ? `${maxSeats} seats per booking. Remove one from either end to swap it.`
-          : `${maxSeats} seats per booking as a guest. Sign in for up to ${MAX_SEATS_MEMBER}, or remove one from either end to swap it.`,
+                    ? `${maxSeats} seats per booking. Remove one to swap it.`
+          : `${maxSeats} seats per booking as a guest. Sign in for up to ${MAX_SEATS_MEMBER}, or remove one to swap it.`,
       );
       return;
     }
@@ -254,11 +233,7 @@ export function SeatSelectionScreen() {
                         type="button"
                         className={styles.remove}
                         onClick={() => toggle(seat)}
-                        /* Disabled in the middle of a run, because removing it
-                           would split the selection in two. The ends stay
-                           removable, which is enough to shrink a run from
-                           either side. */
-                        disabled={holding || !isRunEnd(selected, seat)}
+                                                disabled={holding}
                         aria-label={`Remove seat ${seat.rowLabel}${seat.seatNumber}`}
                       >
                         ×

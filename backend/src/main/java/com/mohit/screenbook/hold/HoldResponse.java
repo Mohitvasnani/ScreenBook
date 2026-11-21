@@ -1,6 +1,7 @@
 package com.mohit.screenbook.hold;
 
-import com.mohit.screenbook.pricing.PricingView;
+import com.mohit.screenbook.pricing.PricingGroupView;
+
 
 import java.time.Instant;
 import java.util.List;
@@ -29,7 +30,7 @@ public record HoldResponse(
         List<HeldSeatView> seats,
         int totalMinor,
         String currency,
-        PricingView pricing,
+        List<PricingGroupView> pricingGroups,
         Instant expiresAt,
         long ttlSeconds
 ) {

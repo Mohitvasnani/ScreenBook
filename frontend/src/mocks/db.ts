@@ -10,7 +10,8 @@
      BookedSeat,
      Booking,
      PriceRate,
-     Pricing,
+       Pricing,
+  PricingGroup,
      Seat,
      SeatStatus,
      Showtime,
@@ -22,7 +23,7 @@
    } from "@/types/api";
    
    import { CINEMAS, cinemaById, type MockCinema } from "./cinemas";
-   import { asRates, type HallClass, listedPrice, priceFor } from "./pricing";
+   import { asRates, type HallClass, listedPrice, priceFor, visibleRules } from "./pricing";
    import { localInstant } from "./zones";
    
    const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] as const;
@@ -247,17 +248,13 @@ const RELEASED_ON_BY_TITLE = new Map(
      return !seededBooked(showtimeId, seatId) && (seatId * 5 + showtimeId * 3) % 17 === 0;
    }
    
-   interface HoldRecord {
+   export interface HoldRecord {
      holdId: string;
      showtimeId: number;
      /* The hold is the unit: it expires whole and converts whole, so there is no
         per-seat state here. */
      seatIds: number[];
-     /* Frozen at claim time and never recomputed, which is what makes the quoted
-        price the charged price. A hold covers one tier, so one breakdown and one
-        per-seat figure describe all of it. */
-     pricing: Pricing;
-     pricePerSeatMinor: number;
+       pricingByTier: Map<Tier, Pricing>;
      expiresAt: number; // epoch ms
      convertedAt: number | null;
    }
@@ -270,6 +267,26 @@ const RELEASED_ON_BY_TITLE = new Map(
    
    export const getHoldRecord = (holdId: string) => holds.get(holdId);
    export const getBooking = (reference: string) => bookings.get(reference);
+
+   
+/* What one seat on this hold costs: the adjusted price of its own tier,
+   frozen when the hold was claimed. */
+export function priceOfSeat(hold: HoldRecord, seat: SeatPosition): number {
+  return hold.pricingByTier.get(seat.tier)!.adjustedMinor;
+}
+
+/* One group per tier on the hold, cheapest first, as the server reports it.
+   The zero bands are kept on the hold and filtered out here. */
+export function pricingGroupsOf(hold: HoldRecord, seats: SeatPosition[]): PricingGroup[] {
+  return [...hold.pricingByTier.entries()]
+    .map(([tier, pricing]) => ({
+      ...pricing,
+      tier,
+      seatCount: seats.filter((seat) => seat.tier === tier).length,
+      rules: visibleRules(pricing),
+    }))
+    .sort((a, b) => a.baseMinor - b.baseMinor || a.tier.localeCompare(b.tier));
+}
    
    function isBooked(showtimeId: number, seatId: number): boolean {
      return bookedKeys.has(key(showtimeId, seatId)) || seededBooked(showtimeId, seatId);
@@ -461,22 +478,26 @@ const RELEASED_ON_BY_TITLE = new Map(
    
      const seats = seatsInOrder([...seatIds].sort((a, b) => a - b));
    
-     /* Priced before the hold is written, so the request's own seats are not
-        counted in its own occupancy. The first seat's listed price is the base
-        for the whole hold, which holds because every seat on a hold shares a row
-        and tier follows the row band, exactly as on the server. */
-     const pricing = pricingFor(showtime, listedPriceMinor(showtime, seats[0]));
-   
-     const hold: HoldRecord = {
-       /* v4 here; the real service issues v7 so the index stays time-ordered. */
-       holdId: crypto.randomUUID(),
-       showtimeId,
-       seatIds: seats.map((seat) => seat.id),
-       pricing,
-       pricePerSeatMinor: pricing.adjustedMinor,
-       expiresAt: Date.now() + HOLD_TTL_SECONDS * 1000,
-       convertedAt: null,
-     };
+       /* Priced before the hold is written, so the request's own seats are not
+     counted in its own occupancy. One breakdown per tier on the hold, each
+     from that tier's own listed price, exactly as the server does it: the
+     percentages are the same for every tier and the money is not. */
+  const pricingByTier = new Map<Tier, Pricing>();
+  for (const seat of seats) {
+    if (!pricingByTier.has(seat.tier)) {
+      pricingByTier.set(seat.tier, pricingFor(showtime, listedPriceMinor(showtime, seat)));
+    }
+  }
+
+  const hold: HoldRecord = {
+    /* v4 here; the real service issues v7 so the index stays time-ordered. */
+    holdId: crypto.randomUUID(),
+    showtimeId,
+    seatIds: seats.map((seat) => seat.id),
+    pricingByTier,
+    expiresAt: Date.now() + HOLD_TTL_SECONDS * 1000,
+    convertedAt: null,
+  };
      holds.set(hold.holdId, hold);
      return { ok: true, hold, seats };
    }
@@ -524,7 +545,7 @@ const RELEASED_ON_BY_TITLE = new Map(
        rowLabel: seat.rowLabel,
        seatNumber: seat.seatNumber,
        tier: seat.tier,
-       pricePaidMinor: hold.pricePerSeatMinor,
+             pricePaidMinor: priceOfSeat(hold, seat),
      }));
    
      const booking: Booking = {

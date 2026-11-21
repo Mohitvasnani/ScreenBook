@@ -61,26 +61,47 @@ class HoldRulesTest {
         assertEquals(2, hold.seats().size());
     }
 
+    /**
+     * Item 8. The rule that used to reject these is gone on purpose: two
+     * people in a nearly full hall have to be able to take the seats that are
+     * left. The cap is now the only rule on which seats may be held together,
+     * and MixedTierHoldTest covers what a hold across tiers costs.
+     */
     @Test
-    @DisplayName("a gap between seats is rejected")
-    void gapIsRejected() {
+    @DisplayName("a gap between seats is allowed")
+    void gapIsAllowed() {
         Run run = fourInARow();
 
-        assertThrows(ValidationFailedException.class, () ->
-                holds.claim(run.showtimeId(),
-                        List.of(run.seatIds().get(0), run.seatIds().get(2)), null));
+        HoldResponse hold = holds.claim(
+                run.showtimeId(),
+                List.of(run.seatIds().get(0), run.seatIds().get(2)), null);
+
+        assertEquals(2, hold.seats().size());
     }
 
     @Test
-    @DisplayName("seats in different rows are rejected")
-    void differentRowsRejected() {
+    @DisplayName("seats in different rows are allowed")
+    void differentRowsAllowed() {
         Run run = fourInARow();
         long elsewhere = seatInAnotherRow(run.showtimeId(), run.rowLabel());
 
-        assertThrows(ValidationFailedException.class, () ->
-                holds.claim(run.showtimeId(), List.of(run.seatIds().getFirst(), elsewhere), null));
+        HoldResponse hold = holds.claim(
+                run.showtimeId(), List.of(run.seatIds().getFirst(), elsewhere), null);
+
+        assertEquals(2, hold.seats().size());
     }
 
+    @Test
+    @DisplayName("a hold within one tier has one pricing group")
+    void oneTierIsOneGroup() {
+        Run run = fourInARow();
+
+        HoldResponse hold = holds.claim(
+                run.showtimeId(), run.seatIds().subList(0, 3), null);
+
+        assertEquals(1, hold.pricingGroups().size());
+        assertEquals(3, hold.pricingGroups().getFirst().seatCount());
+    }
     @Test
     @DisplayName("the same seat twice is rejected")
     void duplicateRejected() {

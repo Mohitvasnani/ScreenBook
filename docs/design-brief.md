@@ -376,13 +376,14 @@ These come from the API and changing them means changing the backend.
 
 - 10 rows labelled A to J, 12 seats per row, 120 seats total, one screen layout
 - A hold lasts 300 seconds
-- **One to three seats per hold as a guest, one to six signed in, all or
+- **One to five seats per hold as a guest, one to ten signed in, all or
   nothing.** The cap is enforced by the server, not just the UI. If any seat is lost between choosing and holding,
   nothing is held, and the 409 names which seats went and what state each is in
-- **Seats must be adjacent:** one row, no gaps. Aisles do not break a run, so
-  seats 3 and 4 count as neighbours. Enforced by the server as well as the UI.
-  The consequence is accepted rather than overlooked: on a busy screening a
-  group may find no row with enough seats together and be unable to book
+- **Seats can be anywhere in the house:** any row, any gap, any tier. There is
+  no adjacency rule, because two people in a nearly full hall have to be able to
+  take the seats that are left. The cap is the only rule on which seats may be
+  held together. A hold across tiers is priced per tier, so the checkout shows
+  one block per tier with its own subtotal
 - Prices in GBP
 - Three seat tiers: rows A to E Normal, F to H Premium, I to J Executive. The
   tier arrives on every seat from the API, so the client never derives it from

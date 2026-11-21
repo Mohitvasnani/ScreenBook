@@ -18,8 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.mohit.screenbook.common.ShowtimeStartedException;
 import com.mohit.screenbook.pricing.PriceLineView;
-import com.mohit.screenbook.pricing.PricingView;
-import java.time.Clock;
+import com.mohit.screenbook.pricing.PricingGroupView;import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
@@ -28,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
 
 @Service
 public class HoldService {
@@ -59,8 +59,7 @@ public class HoldService {
     }
 
     /**
-     * Claims adjacent seats for the TTL, all or nothing.
-     *
+
      * Locks first, then checks, then prices, then inserts, all in one
      * transaction. Locking the seat rows before reading availability means
      * that between our check and our insert, no other transaction can run its
@@ -130,7 +129,6 @@ public class HoldService {
                     "One or more seats do not belong to showtime %d.".formatted(showtimeId));
         }
 
-        requireAdjacent(rows);
 
         List<UnavailableSeat> unavailable = rows.stream()
                 .filter(row -> row.status() != SeatStatus.AVAILABLE)
@@ -170,19 +168,29 @@ public class HoldService {
         if (!inputs.startsAt().isAfter(now)) {
             throw new ShowtimeStartedException();
         }
-                /* Every row carries the same listed price, because a hold covers one
-           tier, so the first is the base for the whole hold. */
-        PriceBreakdown price = pricing.priceFor(
-                rows.getFirst().basePriceMinor(), inputs.facts(), now);
+                    /* One breakdown per tier, so a hold across two tiers is priced against
+           each tier's own listed price. The rules are facts about the
+           screening, so the percentages are the same for every tier and only
+           the base they scale differs. Same shape as SeatMapService, which
+           prices once per distinct base.
+
+           Within one screening a tier has one listed price, so the first seat
+           seen in a tier speaks for it and computeIfAbsent prices it once. */
+        Map<Long, String> tierBySeat = new LinkedHashMap<>();
+        Map<String, PriceBreakdown> priceByTier = new LinkedHashMap<>();
+        for (SeatView row : rows) {
+            tierBySeat.put(row.id(), row.tier());
+            priceByTier.computeIfAbsent(row.tier(), tier ->
+                    pricing.priceFor(row.basePriceMinor(), inputs.facts(), now));
+        }
 
         SeatHold hold = holds.save(
-                SeatHold.claim(showtimeId, ordered, price, now, ttl));
-
+                SeatHold.claim(showtimeId, tierBySeat, priceByTier, now, ttl));
         Map<Long, Integer> frozen = frozenPrices(hold);
         return new HoldResponse(
                 hold.getId(), showtimeId,
                 seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
-                pricingView(hold, frozen),
+                pricingGroups(hold, rows, frozen),
                 hold.getExpiresAt(), ttl.toSeconds());
     }
 
@@ -222,7 +230,7 @@ public class HoldService {
         return new HoldDetailResponse(
                 hold.getId(), hold.getShowtimeId(),
                 seatViews(rows, frozen), total(frozen), rows.getFirst().currency(),
-                pricingView(hold, frozen),
+                pricingGroups(hold, rows, frozen),
                 hold.getExpiresAt(), hold.remainingSeconds(now),
                 apiStatus(hold.stateAt(now)));
     }
@@ -309,26 +317,47 @@ public class HoldService {
                 .collect(Collectors.toMap(HoldSeat::getSeatId, HoldSeat::getPriceMinor));
     }
 
-    /* Only the lines that moved the price are returned. The zero bands stay in
+    /* One group per tier on the hold, built from what was frozen at claim
+   time: the seat count and per-seat price from the seats in the tier, the
+   base and the lines from the hold.
+
+   Only the lines that moved the price are returned. The zero bands stay in
    the database, because a hold taken before a rule existed has to stay
    distinguishable from one where the rule simply did not fire, but a
-   customer does not need to read "Occupancy, plus nothing". */
-    private static PricingView pricingView(SeatHold hold, Map<Long, Integer> frozen) {
-        List<PriceLineView> lines = hold.getPriceRules().stream()
-                .filter(rule -> rule.getBasisPoints() != 0)
-                .map(rule -> new PriceLineView(
-                        rule.getCode(), rule.getLabel(),
-                        rule.getBasisPoints(), rule.getAdjustmentMinor()))
+   customer does not need to read "Occupancy, plus nothing".
+
+   baseMinor plus every stored line, zeros and cap included, must equal the
+   adjusted price of the group. Nothing enforces that at runtime; the
+   quoted-equals-charged test is what pins it. */
+    private static List<PricingGroupView> pricingGroups(SeatHold hold,
+                                                        List<SeatView> rows,
+                                                        Map<Long, Integer> frozen) {
+        return hold.getPriceGroups().stream()
+                .map(group -> {
+                    String tier = group.getTier();
+
+                    List<SeatView> inTier = rows.stream()
+                            .filter(row -> row.tier().equals(tier))
+                            .toList();
+
+                    List<PriceLineView> lines = hold.getPriceRules().stream()
+                            .filter(rule -> rule.getTier().equals(tier))
+                            .filter(rule -> rule.getBasisPoints() != 0)
+                            .map(rule -> new PriceLineView(
+                                    rule.getCode(), rule.getLabel(),
+                                    rule.getBasisPoints(), rule.getAdjustmentMinor()))
+                            .toList();
+
+                    /* Every seat in a tier carries the same price: the rules
+                       are facts about the screening and the base is the
+                       tier's. So the first seat speaks for the group. */
+                    int adjusted = frozen.get(inTier.getFirst().id());
+
+                    return new PricingGroupView(
+                            tier, inTier.size(),
+                            group.getBasePriceMinor(), adjusted, lines);
+                })
                 .toList();
-
-        /* A hold covers one tier, so every seat carries the same price and the
-           first is the per-seat figure for the whole hold. baseMinor plus every
-           stored line, zeros and cap included, must equal this number. Nothing
-           enforces that at runtime; the quoted-equals-charged test is what
-           pins it. */
-        int adjusted = frozen.values().stream().findFirst().orElseThrow();
-
-        return new PricingView(hold.getBasePriceMinor(), adjusted, lines);
     }
 
     private static int total(Map<Long, Integer> frozen) {

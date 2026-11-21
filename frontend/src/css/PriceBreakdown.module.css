@@ -30,3 +30,10 @@
   .amount {
     font-variant-numeric: tabular-nums;
   }
+  
+/* The tier's name and subtotal, shown only when a hold spans tiers. The lines
+   below it add up to the figure on this row. */
+.heading {
+  composes: row;
+  font-weight: 600;
+}

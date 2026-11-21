@@ -207,16 +207,28 @@ export interface Pricing {
   rules: PriceLine[];
 }
 
+/* One tier on a hold, priced on its own. The rules are percentages of a base,
+   so a hold across two tiers has two bases and two sets of amounts: the same
+   basis points, different money. Within a group, baseMinor plus every rule's
+   adjustmentMinor equals adjustedMinor. */
+export interface PricingGroup extends Pricing {
+  tier: Tier;
+  /* How many of the hold's seats are in this tier. */
+  seatCount: number;
+}
+
   export interface Hold {
-    holdId: string;
-    showtimeId: number;
-    seats: HeldSeat[];
-    totalMinor: number;
-    currency: string;
-    pricing: Pricing;
-    expiresAt: string;
-    ttlSeconds: number;
-  }
+  holdId: string;
+  showtimeId: number;
+  seats: HeldSeat[];
+  totalMinor: number;
+  currency: string;
+  /* One group per tier on the hold, cheapest first. A hold can span tiers,
+     so there is no single breakdown for the whole hold. */
+  pricingGroups: PricingGroup[];
+  expiresAt: string;
+  ttlSeconds: number;
+}
    
    export interface HoldDetail extends Hold {
      status: HoldStatus;

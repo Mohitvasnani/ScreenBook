@@ -1,6 +1,6 @@
 package com.mohit.screenbook.hold;
 
-import com.mohit.screenbook.pricing.PricingView;
+import com.mohit.screenbook.pricing.PricingGroupView;
 
 import java.time.Instant;
 import java.util.List;
@@ -14,9 +14,9 @@ import java.util.UUID;
  * checkout screen reloaded four minutes in shows a minute left rather than
  * five.
  *
- * The prices and the breakdown are the ones frozen at claim time, so a reload
- * shows the same figures as the original quote even if the house has filled
- * since.
+ * The prices and the breakdown groups are the ones frozen at claim time, so a
+ * reload shows the same figures as the original quote even if the house has
+ * filled since.
  */
 public record HoldDetailResponse(
         UUID holdId,
@@ -24,7 +24,7 @@ public record HoldDetailResponse(
         List<HeldSeatView> seats,
         int totalMinor,
         String currency,
-        PricingView pricing,
+        List<PricingGroupView> pricingGroups,
         Instant expiresAt,
         long ttlSeconds,
         HoldStatus status

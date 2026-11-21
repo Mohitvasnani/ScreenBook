@@ -202,18 +202,16 @@ export function CheckoutScreen() {
                 </>
               )}
 
-              {/* One line, not one per seat. Seats on a hold share a row and
-                  tier follows the row band, so every seat here costs the same
-                  and repeating the figure explained nothing. The money is in
-                  the breakdown below. */}
+                            {/* One line naming the seats. The tiers and what each costs are
+                  in the breakdown below, because a hold can span tiers and
+                  naming one tier here would only be true for some of them. */}
               <Row
                 label={count === 1 ? "Seat" : "Seats"}
-                value={`${seatList} · ${hold.seats[0].tier.toLowerCase()}`}
+                value={seatList}
               />
 
-              <PriceBreakdown
-                pricing={hold.pricing}
-                seatCount={count}
+                            <PriceBreakdown
+                groups={hold.pricingGroups}
                 currency={hold.currency}
               />
 
@@ -233,7 +231,7 @@ export function CheckoutScreen() {
                 says how long you have and this is about what you pay. */}
             <p className={styles.heldPrice}>
               This price is held for you until {clockTime(hold.expiresAt)}.
-              {hold.pricing.rules.length > 0 &&
+                            {hold.pricingGroups.some((group) => group.rules.length > 0) &&
                 " Prices move as the house fills; yours will not."}
             </p>
           </div>

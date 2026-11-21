@@ -648,7 +648,7 @@ with no money attached. The map spans all three tiers, and each rule is a
 percentage of each tier's own listed price, so one shared money figure would be
 wrong for two of the three. The percentages are identical across tiers, so they
 are reported once and every seat carries its own price. The checkout gets the
-money version, where a hold is always one tier by construction.
+money version, as one group per tier on the hold.
 
 An empty `priceRules` is the ordinary case and means every seat is at its
 listed price. Render it as a single line, not an empty panel.
@@ -733,20 +733,22 @@ rather than quietly collapsed to `[5, 7]`. Deduping would hide the bug in
 whatever built the request and make "how many seats did you ask for" ambiguous
 in every message that follows.
 
-**The seats must be adjacent:** all in one row, with no gaps. A group books in
-order to sit together, so scattered seats are not a booking anyone wants, and
-allowing them leaves the house full of unsellable single gaps.
+**Seats can be anywhere in the house.** They do not have to be in one row,
+next to each other, or in one tier. A group of two in a nearly full hall has to
+be able to take the two seats that are left, and the earlier rule (one row, no
+gaps) refused exactly that: on a busy screening where no row had enough seats
+together, a group could not book at all. The cap above is now the only rule on
+which seats may be held together.
 
-Aisles deliberately do not break a run. Seats 3 and 4 have a walking aisle
-between them and still count as neighbours, because treating the aisle as a
-break would confine every group of four or more to the six-wide centre block.
-Two people stepping over an aisle is a better outcome than a family of five
-being told there is nowhere to sit.
+The cost of free choice is that a group can leave single seats stranded between
+them, which the old rule prevented. No rule against that replaces it, because
+one would bring back the same refusals in a softer form and this project does
+not take that cost.
 
-The cost of this rule is worth stating: on a busy screening where no row has
-six free seats in a row, a group of six cannot book at all. A softer rule, free
-choice but no orphan seats left stranded, would sell more seats and take more
-code. This project took the strict version deliberately.
+The other consequence is pricing. A hold can span tiers, so it can no longer be
+priced from one base: the rules are percentages of a tier's listed price, so
+each tier on a hold has its own base and its own amounts. See `pricingGroups`
+below.
 
 **201**, with `Location: /api/holds/{holdId}`
 
@@ -760,20 +762,24 @@ code. This project took the strict version deliberately.
   ],
   "totalMinor": 56000,
   "currency": "INR",
-  "pricing": {
-    "baseMinor": 20000,
-    "adjustedMinor": 28000,
-    "rules": [
-      { "code": "OCCUPANCY",   "label": "Nearly full",
-        "basisPoints": 2000, "adjustmentMinor": 4000 },
-      { "code": "LEAD_TIME",   "label": "Under 6 hours to showtime",
-        "basisPoints": 1000, "adjustmentMinor": 2000 },
-      { "code": "TIME_OF_DAY", "label": "Evening show",
-        "basisPoints": 500,  "adjustmentMinor": 1000 },
-      { "code": "DAY_OF_WEEK", "label": "Weekend",
-        "basisPoints": 500,  "adjustmentMinor": 1000 }
-    ]
-  },
+  "pricingGroups": [
+    {
+      "tier": "NORMAL",
+      "seatCount": 2,
+      "baseMinor": 20000,
+      "adjustedMinor": 28000,
+      "rules": [
+          { "code": "OCCUPANCY",   "label": "Nearly full",
+            "basisPoints": 2000, "adjustmentMinor": 4000 },
+          { "code": "LEAD_TIME",   "label": "Under 6 hours to showtime",
+            "basisPoints": 1000, "adjustmentMinor": 2000 },
+          { "code": "TIME_OF_DAY", "label": "Evening show",
+            "basisPoints": 500,  "adjustmentMinor": 1000 },
+          { "code": "DAY_OF_WEEK", "label": "Weekend",
+            "basisPoints": 500,  "adjustmentMinor": 1000 }
+      ]
+    }
+  ],
   "expiresAt": "2026-10-31T08:12:00Z",
   "ttlSeconds": 300
 }
@@ -792,16 +798,57 @@ moment of the claim, and `POST /api/bookings` charges it rather than working
 the price out again. This is what lets a checkout screen promise the price is
 held.
 
-`pricing` explains how one seat reached its price: the listed figure, the
-adjusted figure, and one line per rule that moved it, in display order.
-`baseMinor` plus every `adjustmentMinor` equals `adjustedMinor`, always,
-including the `CAP` line if it ever appears.
+`pricingGroups` explains how the seats of each tier reached their price. There
+is one group per tier on the hold, cheapest first. Each carries the tier, how
+many of the hold's seats are in it, the listed figure, the adjusted figure for
+one seat of that tier, and one line per rule that moved it, in display order. In
+each group `baseMinor` plus every `adjustmentMinor` equals `adjustedMinor`,
+always, including the `CAP` line if it ever appears.
 
-A hold covers exactly one tier, so one `pricing` block describes every seat on
-it. That is not a rule anyone wrote down: seats on a hold must share a row, and
-tier is assigned by row band, so it falls out of two unrelated rules. The price
-is still recorded per seat in the database, so the schema stays correct if
-either of those changes.
+Per tier because the rules are percentages of a base. The percentages are facts
+about the screening and are the same for every tier, but a Premium seat and a
+Normal seat start from different listed prices, so the money each line works out
+to differs. A hold in one tier, the ordinary case, has one group. A hold across
+two tiers has two, and a seat's `priceMinor` is the `adjustedMinor` of the group
+for its tier. Two seats in different tiers, on the same screening:
+
+```json
+{
+  "seats": [
+    { "seatId": 1002, "rowLabel": "A", "seatNumber": 2, "tier": "NORMAL", "priceMinor": 25000 },
+    { "seatId": 1065, "rowLabel": "F", "seatNumber": 5, "tier": "PREMIUM", "priceMinor": 43750 }
+  ],
+  "totalMinor": 68750,
+  "pricingGroups": [
+    {
+      "tier": "NORMAL", "seatCount": 1, "baseMinor": 20000, "adjustedMinor": 25000,
+      "rules": [
+        { "code": "OCCUPANCY",   "label": "Nearly full",
+          "basisPoints": 2000, "adjustmentMinor": 4000 },
+        { "code": "DAY_OF_WEEK", "label": "Weekend",
+          "basisPoints": 500,  "adjustmentMinor": 1000 }
+      ]
+    },
+    {
+      "tier": "PREMIUM", "seatCount": 1, "baseMinor": 35000, "adjustedMinor": 43750,
+      "rules": [
+        { "code": "OCCUPANCY",   "label": "Nearly full",
+          "basisPoints": 2000, "adjustmentMinor": 7000 },
+        { "code": "DAY_OF_WEEK", "label": "Weekend",
+          "basisPoints": 500,  "adjustmentMinor": 1750 }
+      ]
+    }
+  ]
+}
+```
+
+The same 2000 and 500 basis points on both groups, and different money. That is
+the whole reason the breakdown is per tier.
+
+In the database each tier is a row of `hold_price_group` carrying its listed
+price, and each rule line is a row of `hold_price_rule` keyed by hold, tier and
+code, with a composite foreign key to the group so a line cannot name a tier its
+hold does not have. The price per seat stays on `hold_seat`.
 
 Only the rules that moved the price appear. The bands that did not fire are
 stored, so a hold taken before a rule existed stays distinguishable from one
@@ -898,16 +945,20 @@ when the user arrives by clicking.
   ],
   "totalMinor": 56000,
   "currency": "INR",
-  "pricing": {
-    "baseMinor": 20000,
-    "adjustedMinor": 28000,
-    "rules": [
-      { "code": "OCCUPANCY",   "label": "Nearly full",
-        "basisPoints": 2000, "adjustmentMinor": 4000 },
-      { "code": "TIME_OF_DAY", "label": "Evening show",
-        "basisPoints": 500,  "adjustmentMinor": 1000 }
-    ]
-  },
+  "pricingGroups": [
+    {
+      "tier": "NORMAL",
+      "seatCount": 2,
+      "baseMinor": 20000,
+      "adjustedMinor": 28000,
+      "rules": [
+          { "code": "OCCUPANCY",   "label": "Nearly full",
+            "basisPoints": 2000, "adjustmentMinor": 4000 },
+          { "code": "TIME_OF_DAY", "label": "Evening show",
+            "basisPoints": 500,  "adjustmentMinor": 1000 }
+      ]
+    }
+  ],
   "expiresAt": "2026-10-31T08:12:00Z",
   "ttlSeconds": 180,
   "status": "ACTIVE"
@@ -925,8 +976,8 @@ the original quote even if the house has filled since, which is the whole point
 of freezing them.
 
 The seats in this example are the two in the row above, so this is the same
-hold read back rather than a different one: one `pricing` block, because a hold
-is one tier.
+hold read back rather than a different one: one `pricingGroups` entry, because
+both seats are in one tier.
 
 **404** unknown hold.
 

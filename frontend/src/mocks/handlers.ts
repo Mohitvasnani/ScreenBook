@@ -41,8 +41,11 @@
     showtimesForCinema,
     type SeatPosition,
     priceCinemas,
+      type HoldRecord,
+  priceOfSeat,
+  pricingGroupsOf,
   } from "./db";
-   import { visibleRules } from "./pricing";
+   
    
    /* Enough latency that loading states are real rather than theoretical. */
    const LATENCY_MS = 180;
@@ -97,17 +100,17 @@
      problemResponse(problem("validation-failed", 422, "Validation failed", detail, instance));
    
    /* Every seat on a hold carries the price frozen when it was claimed, not a
-      price worked out now. That is the whole point of the freeze: the house fills
-      while a customer is at the checkout. */
-   function heldSeats(seats: SeatPosition[], pricePerSeatMinor: number): HeldSeat[] {
-     return seats.map((seat) => ({
-       seatId: seat.id,
-       rowLabel: seat.rowLabel,
-       seatNumber: seat.seatNumber,
-       tier: seat.tier,
-       priceMinor: pricePerSeatMinor,
-     }));
-   }
+   price worked out now. That is the whole point of the freeze: the house fills
+   while a customer is at the checkout. Each seat carries its own tier's price. */
+function heldSeats(seats: SeatPosition[], hold: HoldRecord): HeldSeat[] {
+  return seats.map((seat) => ({
+    seatId: seat.id,
+    rowLabel: seat.rowLabel,
+    seatNumber: seat.seatNumber,
+    tier: seat.tier,
+    priceMinor: priceOfSeat(hold, seat),
+  }));
+}
    
    const totalOf = (seats: HeldSeat[]) =>
      seats.reduce((sum, seat) => sum + seat.priceMinor, 0);
@@ -120,26 +123,6 @@
      return `${lost.length} of the ${requested} seats you chose have just gone.`;
    }
    
-   /* The contract's adjacency rule: one row, no gaps. The mock was missing it,
-      which mattered once pricing arrived, because a cross-tier hold would be
-      priced entirely at the first seat's tier. Aisles deliberately do not break a
-      run, same as the service. */
-   function adjacencyError(seats: SeatPosition[]): string | null {
-     if (seats.length <= 1) return null;
-   
-     const row = seats[0].rowLabel;
-     if (seats.some((seat) => seat.rowLabel !== row)) {
-       return "Seats must all be in the same row.";
-     }
-   
-     const numbers = seats.map((seat) => seat.seatNumber);
-     const lowest = Math.min(...numbers);
-     const highest = Math.max(...numbers);
-     if (highest - lowest + 1 !== seats.length) {
-       return "Seats must be next to each other, with no gaps between them.";
-     }
-     return null;
-   }
    
    export const handlers = [
        /* country is a filter, not a required parameter, because the globe's opening
@@ -455,14 +438,7 @@
          return invalid("/api/holds", "seatIds must not repeat a seat.");
        }
    
-       /* Only checked when every seat was found, so an unknown seat id still
-          comes back as the 404 that createHold produces rather than as a
-          confusing adjacency complaint. */
-       const positions = seatsInOrder(seatIds as number[]);
-       if (positions.length === seatIds.length) {
-         const adjacency = adjacencyError(positions);
-         if (adjacency) return invalid("/api/holds", adjacency);
-       }
+       
    
        const outcome = createHold(showtimeId, seatIds as number[]);
    
@@ -488,7 +464,7 @@
        }
    
        const showtime = findShowtime(showtimeId)!;
-       const seats = heldSeats(outcome.seats, outcome.hold.pricePerSeatMinor);
+           const seats = heldSeats(outcome.seats, outcome.hold);
    
        const body: Hold = {
          holdId: outcome.hold.holdId,
@@ -496,12 +472,9 @@
          seats,
          totalMinor: totalOf(seats),
          currency: showtime.currency,
-         /* The zero bands are kept on the hold, as the server keeps them in the
-            database, and filtered out of the response. */
-         pricing: {
-           ...outcome.hold.pricing,
-           rules: visibleRules(outcome.hold.pricing),
-         },
+                 /* The zero bands are kept on the hold, as the server keeps them in the
+           database, and filtered out of the response. One group per tier. */
+        pricingGroups: pricingGroupsOf(outcome.hold, outcome.seats),
          expiresAt: new Date(outcome.hold.expiresAt).toISOString(),
          ttlSeconds: HOLD_TTL_SECONDS,
        };
@@ -529,7 +502,8 @@
              ? "ACTIVE"
              : "EXPIRED";
    
-       const seats = heldSeats(seatsInOrder(hold.seatIds), hold.pricePerSeatMinor);
+           const positions = seatsInOrder(hold.seatIds);
+    const seats = heldSeats(positions, hold);
    
        const body: HoldDetail = {
          holdId: hold.holdId,
@@ -537,12 +511,9 @@
          seats,
          totalMinor: totalOf(seats),
          currency: showtime.currency,
-         /* Read back unchanged, so a checkout reloaded four minutes in shows the
-            same figures as the original quote. */
-         pricing: {
-           ...hold.pricing,
-           rules: visibleRules(hold.pricing),
-         },
+                /* Read back unchanged, so a checkout reloaded four minutes in shows the
+           same figures as the original quote. */
+        pricingGroups: pricingGroupsOf(hold, positions),
          expiresAt: new Date(hold.expiresAt).toISOString(),
          ttlSeconds: remainingSeconds(hold.expiresAt),
          status,

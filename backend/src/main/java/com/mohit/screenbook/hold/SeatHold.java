@@ -14,7 +14,7 @@ import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collection;
+import java.util.Map;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,17 +39,9 @@ public class SeatHold {
     @Column(name = "showtime_id", nullable = false, updatable = false)
     private Long showtimeId;
 
-    /**
-     * The seat's listed price for this hold's tier, before any demand rule.
-     * One value for the whole hold, because a hold covers one tier, and it is
-     * what the breakdown counts up from: base plus every rule line equals the
-     * per-seat price on the children.
-     */
-    @Column(name = "base_price_minor", nullable = false, updatable = false)
-    private int basePriceMinor;
 
     /**
-     * The seats this hold covers, one to six of them.
+
      *
      * @ElementCollection stores a collection of value types in a table of
      * their own; @CollectionTable names that table and the column pointing
@@ -89,6 +81,27 @@ public class SeatHold {
     )
     private Set<HoldPriceRule> priceRules = new LinkedHashSet<>();
 
+    /**
+     * One row per tier on the hold, carrying that tier's listed price. The
+     * rules above hang off these rows by the composite foreign key
+     * (hold_id, tier).
+     *
+     * A sibling of the rules rather than their parent, because Hibernate does
+     * not support a collection nested inside an embeddable. The relationship
+     * between the two is enforced in the database, and the Java side only has
+     * to write both.
+     *
+     * Same handling as the other collections: a Set, lazy, read inside the
+     * transaction. getPriceGroups sorts, so display order is decided in one
+     * place.
+     */
+    @ElementCollection
+    @CollectionTable(
+            name = "hold_price_group",
+            joinColumns = @JoinColumn(name = "hold_id")
+    )
+    private Set<HoldPriceGroup> priceGroups = new LinkedHashSet<>();
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -118,43 +131,64 @@ public class SeatHold {
     /**
      * The only way to create a hold.
      *
-     * The breakdown arrives already computed, and this is where it stops being
-     * a calculation and becomes a record. Every seat gets the same adjusted
-     * price because a hold covers exactly one tier: seats on a hold share a
-     * row, and tier is assigned by row band. It is still written per seat, so
-     * the schema stays correct if either of those rules ever changes.
+     * The breakdowns arrive already computed, one per tier, and this is where
+     * they stop being a calculation and become a record. Every seat gets the
+     * adjusted price of its own tier, and each tier that has a seat on this
+     * hold gets one group row carrying its listed price and one rule row per
+     * rule.
+     *
+     * Only the tiers actually used are written. priceByTier may hold more
+     * entries than that, and a group with no seats would be a quoted price for
+     * nothing.
      *
      * The empty check is a backstop, not the error path: CreateHoldRequest's
-     * @Size(min = 1, max = 6) rejects it over HTTP long before this runs, so
+     * @Size(min = 1, max = 20) rejects it over HTTP long before this runs, so
      * this firing means a bug in a caller rather than a user mistake. A hold
      * with no seats is nonsense and should be unconstructable.
      */
-    public static SeatHold claim(Long showtimeId, Collection<Long> seatIds,
-                                 PriceBreakdown price, Instant now, Duration ttl) {
-        if (seatIds == null || seatIds.isEmpty()) {
+    public static SeatHold claim(Long showtimeId,
+                                 Map<Long, String> tierBySeat,
+                                 Map<String, PriceBreakdown> priceByTier,
+                                 Instant now, Duration ttl) {
+        if (tierBySeat == null || tierBySeat.isEmpty()) {
             throw new IllegalArgumentException("A hold must cover at least one seat");
         }
 
         SeatHold hold = new SeatHold();
         hold.showtimeId = showtimeId;
-        hold.basePriceMinor = price.basePriceMinor();
         hold.createdAt = now;
         hold.expiresAt = now.plus(ttl);
 
-        for (Long seatId : seatIds) {
+        for (Map.Entry<Long, String> seat : tierBySeat.entrySet()) {
             /* The showtime is copied into each child so the row satisfies the
                composite foreign key. The parent is the only thing that knows
                it, which is why the children are built here and nowhere else. */
-            hold.seats.add(HoldSeat.of(seatId, showtimeId, price.adjustedPriceMinor()));
+            PriceBreakdown price = priceOf(priceByTier, seat.getValue());
+            hold.seats.add(HoldSeat.of(
+                    seat.getKey(), showtimeId, price.adjustedPriceMinor()));
         }
 
-        for (PriceRule rule : price.rules()) {
-            hold.priceRules.add(HoldPriceRule.of(
-                    rule.code(), rule.label(),
-                    rule.basisPoints(), rule.adjustmentMinor(), rule.sortOrder()));
+        for (String tier : new LinkedHashSet<>(tierBySeat.values())) {
+            PriceBreakdown price = priceOf(priceByTier, tier);
+            hold.priceGroups.add(HoldPriceGroup.of(tier, price.basePriceMinor()));
+
+            for (PriceRule rule : price.rules()) {
+                hold.priceRules.add(HoldPriceRule.of(
+                        tier, rule.code(), rule.label(),
+                        rule.basisPoints(), rule.adjustmentMinor(), rule.sortOrder()));
+            }
         }
 
         return hold;
+    }
+
+    private static PriceBreakdown priceOf(Map<String, PriceBreakdown> priceByTier,
+                                          String tier) {
+        PriceBreakdown price = priceByTier.get(tier);
+        if (price == null) {
+            throw new IllegalArgumentException("No price for tier " + tier);
+        }
+        return price;
     }
 
     /**
@@ -198,7 +232,6 @@ public class SeatHold {
 
     public UUID getId() { return id; }
     public Long getShowtimeId() { return showtimeId; }
-    public int getBasePriceMinor() { return basePriceMinor; }
     public Instant getExpiresAt() { return expiresAt; }
     public long getVersion() { return version; }
 
@@ -217,6 +250,18 @@ public class SeatHold {
     public List<HoldPriceRule> getPriceRules() {
         return priceRules.stream()
                 .sorted(Comparator.comparingInt(HoldPriceRule::getSortOrder))
+                .toList();
+    }
+
+    /**
+     * One group per tier on the hold, cheapest first, ties broken by tier code
+     * so the order is a function of the data and not of whatever order
+     * Hibernate iterates a Set in.
+     */
+    public List<HoldPriceGroup> getPriceGroups() {
+        return priceGroups.stream()
+                .sorted(Comparator.comparingInt(HoldPriceGroup::getBasePriceMinor)
+                        .thenComparing(HoldPriceGroup::getTier))
                 .toList();
     }
 
