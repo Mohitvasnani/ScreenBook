@@ -101,6 +101,7 @@ export function CinemasScreen() {
      whole planet on screen, and both countries in the list. */
   const [market, setMarket] = useState<Market | null>(null);
   const [city, setCity] = useState<string | null>(null);
+  
     /* Which question the camera should answer. The viewer's last action sets it,
      because a city chosen after a radius and a radius chosen after a city are
      different intentions and props alone cannot tell them apart. */
@@ -460,7 +461,7 @@ export function CinemasScreen() {
                 are listed below as links. */}
             <p className={styles.note}>
               The globe shows every cinema {sentence ? `in ${sentence}` : "in both countries"}.
-              The list below has the same cinemas as links.
+                                         Pick a city to list its cinemas below as links.
             </p>
           </div>
         </div>
@@ -537,35 +538,96 @@ export function CinemasScreen() {
           <EmptyState title={`No cinemas in ${city ?? sentence ?? "the dataset"} yet.`} />
         )}
 
-        {sections.map((section) => (
-          <Fragment key={section.id}>
-            {/* The country heading exists only when the page is showing more
-                than one country. With a country chosen the h1 already names
-                it and a second heading saying the same word is noise. */}
-            {market === null && section.cities.length > 0 && (
-              <h2 className={styles.countryTitle}>{section.label}</h2>
-            )}
+                {/* Nothing chosen: forty cities rather than 980 cinemas. The cinemas
+            appear once somebody picks a city. */}
+        {city === null && (
+          <CityIndex cities={cities} market={market} onPick={chooseCityRow} />
+        )}
 
-            {section.cities.map(([name, cinemas]) => (
-              <section key={`${section.id}-${name}`} className={styles.group}>
-                {market === null ? (
-                  <h3 className={styles.groupTitle}>{name}</h3>
-                ) : (
-                  <h2 className={styles.groupTitle}>{name}</h2>
-                )}
+        {city !== null &&
+          sections.map((section) => (
+            <Fragment key={section.id}>
+              {/* The country heading exists only when the page is showing more
+                  than one country. With a country chosen the h1 already names
+                  it and a second heading saying the same word is noise. */}
+              {market === null && section.cities.length > 0 && (
+                <h2 className={styles.countryTitle}>{section.label}</h2>
+              )}
 
-                <ul className={styles.cards}>
-                  {cinemas.map((cinema) => (
-                    <li key={cinema.id}>
-                      <CinemaCard cinema={cinema} />
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </Fragment>
-        ))}
+              {section.cities.map(([name, cinemas]) => (
+                <section key={`${section.id}-${name}`} className={styles.group}>
+                  {market === null ? (
+                    <h3 className={styles.groupTitle}>{name}</h3>
+                  ) : (
+                    <h2 className={styles.groupTitle}>{name}</h2>
+                  )}
+
+                  <ul className={styles.cards}>
+                    {cinemas.map((cinema) => (
+                      <li key={cinema.id}>
+                        <CinemaCard cinema={cinema} />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+
+            </Fragment>
+          ))}
       </div>
+    </>
+  );
+}
+
+/* The opening list. Forty rows from /api/cinemas/cities instead of every
+   cinema, so nothing is listed until somebody chooses. Biggest first, with the
+   count on the card, so the order says what it is: cinemas in the dataset,
+   not a ranking of cities. A city is a button rather than a link because
+   choosing one changes this page instead of leaving it. */
+function CityIndex({
+  cities,
+  market,
+  onPick,
+}: {
+  cities: CinemaCity[];
+  market: Market | null;
+  onPick: (row: CinemaCity) => void;
+}) {
+  const groups = MARKETS.filter((m) => market === null || m.id === market)
+    .map((m) => ({
+      id: m.id,
+      label: m.label,
+      rows: cities
+        .filter((row) => row.country === m.id)
+        .sort((a, b) => b.cinemaCount - a.cinemaCount || a.city.localeCompare(b.city)),
+    }))
+    .filter((group) => group.rows.length > 0);
+
+  return (
+    <>
+      {groups.map((group) => (
+        <Fragment key={group.id}>
+          {market === null && <h2 className={styles.countryTitle}>{group.label}</h2>}
+          <ul className={styles.cards}>
+            {group.rows.map((row) => (
+              <li key={`${row.country}-${row.state}-${row.city}`}>
+                <button
+                  type="button"
+                  className={`${styles.card} ${styles.cardButton}`}
+                  onClick={() => onPick(row)}
+                >
+                  <span className={styles.cardName}>{row.city}</span>
+                  <span className={styles.cardMeta}>
+                    <span>
+                      {row.cinemaCount} {row.cinemaCount === 1 ? "cinema" : "cinemas"}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Fragment>
+      ))}
     </>
   );
 }

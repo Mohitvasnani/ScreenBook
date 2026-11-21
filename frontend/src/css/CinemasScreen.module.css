@@ -287,6 +287,15 @@
   color: var(--color-n700);
 }
 
+/* A city card is a button, so its browser defaults have to be undone for it to
+   sit in the same grid as the cinema cards. */
+.cardButton {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 /* The distance is the one number on this card worth reading precisely, so it
    gets the accent rather than the muted text colour. */
 .badge {
