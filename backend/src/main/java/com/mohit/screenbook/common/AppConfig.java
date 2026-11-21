@@ -10,12 +10,14 @@ import com.mohit.screenbook.catalogue.SeedProperties;
 import java.time.Clock;
 import com.mohit.screenbook.routing.RoutingProperties;
 import org.springframework.cache.annotation.EnableCaching;
-
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableAsync;
 /**
  * Application-wide beans and the OpenAPI document's metadata.
  */
 @Configuration
 @EnableCaching
+@EnableAsync
 @EnableConfigurationProperties({
         PricingProperties.class,
         SeedProperties.class,
