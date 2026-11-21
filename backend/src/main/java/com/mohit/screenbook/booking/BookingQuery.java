@@ -67,6 +67,25 @@ public class BookingQuery {
             ORDER BY b.booked_at DESC, b.reference, s.row_label, s.seat_number
             """;
 
+    /**
+     * Soonest first. starts_at > now() is the boundary HoldService uses to
+     * refuse a started screening, so upcoming and still-bookable agree.
+     * b.reference breaks ties between two bookings on one screening, which
+     * also keeps each booking's rows contiguous for the fold.
+     */
+    private static final String UPCOMING_BY_USER = SELECT + """
+            WHERE b.user_id = :userId
+              AND st.starts_at > now()
+            ORDER BY st.starts_at, b.reference, s.row_label, s.seat_number
+            """;
+
+    /** Most recent first. A screening starting exactly now counts as past. */
+    private static final String PAST_BY_USER = SELECT + """
+            WHERE b.user_id = :userId
+              AND st.starts_at <= now()
+            ORDER BY st.starts_at DESC, b.reference, s.row_label, s.seat_number
+            """;
+
     private final JdbcClient jdbc;
 
     BookingQuery(JdbcClient jdbc) {
@@ -110,13 +129,25 @@ public class BookingQuery {
     }
 
     List<BookingResponse> forUser(UUID userId) {
-        List<Row> rows = jdbc.sql(BY_USER)
+        return foldByBooking(BY_USER, userId);
+    }
+
+    List<BookingResponse> upcomingForUser(UUID userId) {
+        return foldByBooking(UPCOMING_BY_USER, userId);
+    }
+
+    List<BookingResponse> pastForUser(UUID userId) {
+        return foldByBooking(PAST_BY_USER, userId);
+    }
+
+    private List<BookingResponse> foldByBooking(String sql, UUID userId) {
+        List<Row> rows = jdbc.sql(sql)
                 .param("userId", userId)
                 .query(BookingQuery::toRow)
                 .list();
 
         /* Grouped by reference rather than by index, and into a LinkedHashMap
-           so the newest-first order from the query survives the grouping. */
+           so the order from the query survives the grouping. */
         Map<String, List<Row>> byBooking = new LinkedHashMap<>();
         for (Row row : rows) {
             byBooking.computeIfAbsent(row.reference(), key -> new ArrayList<>()).add(row);

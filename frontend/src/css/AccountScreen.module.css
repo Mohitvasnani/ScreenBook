@@ -174,3 +174,8 @@
       opacity: 0.45;
     }
   }
+  .sectionTitle {
+  margin-top: 40px;
+  font-family: var(--font-heading);
+  font-size: 22px;
+}

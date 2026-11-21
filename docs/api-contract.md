@@ -1412,6 +1412,29 @@ booked_at DESC)` is already in, so the sort costs nothing. The index is partial,
 `WHERE user_id IS NOT NULL`, and the query's `WHERE b.user_id = ?` implies that
 predicate, which is what keeps it usable.
 
+### Upcoming and past
+
+`GET /api/me/bookings/upcoming` and `GET /api/me/bookings/past` return the same
+objects as above, split at the screening's start. Both need a session (**401**
+otherwise) and match on `user_id` only, for the same reason.
+
+- **upcoming**: `showtime.starts_at > now()`, soonest screening first.
+- **past**: `showtime.starts_at <= now()`, most recent screening first.
+
+The boundary is the one `HoldService` uses to refuse a screening that has
+started, so a booking is upcoming for exactly as long as its seats could still
+have been booked. A booking is one screening, so it is wholly in one list.
+
+Nothing is stored. "Past" is derived at read time and means the film has
+started, not that anyone watched it. There is no end time: the boundary is the
+start. `now()` is the start of the read's transaction, so one request has one
+answer.
+
+Neither list can use `booking_by_user`, because the order is `showtime.starts_at`
+on a joined table and Postgres sorts the account's rows. That is cheap at this
+size and not worth an index. Neither list pages yet, and `past` is the one that
+will grow.
+
 ---
 
 ## Sessions and cookies

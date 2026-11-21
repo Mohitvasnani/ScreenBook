@@ -15,7 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
-
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import com.mohit.screenbook.common.ValidationFailedException;
@@ -153,6 +153,81 @@ class BookingOwnershipTest {
 
         assertNotNull(bookings.confirm(holdId, null, freshEmail()));
     }
+
+
+    /**
+     * The boundary is the screening's start, so the same booking has to move
+     * from one list to the other when the start passes. Each list is asserted
+     * on both sides: "upcoming has it" alone would pass if upcoming returned
+     * everything.
+     */
+    @Test
+    @DisplayName("a booking is upcoming until its screening starts, then past")
+    void bookingMovesFromUpcomingToPast() {
+        AuthService.Session session = signUp(freshEmail());
+        UUID userId = session.user().getId();
+        BookingResponse booked = bookAs(userId, session.user().getEmail());
+        OffsetDateTime original = startOf(booked.showtimeId());
+
+        try {
+            /* The premise: someAvailableSeat only offers screenings in the
+               future, so the booking starts out upcoming. The account is new,
+               so these are exact lists, not "contains". */
+            assertEquals(List.of(booked.bookingReference()),
+                    references(bookings.upcomingForUser(userId)));
+            assertTrue(bookings.pastForUser(userId).isEmpty(),
+                    "a screening in the future is not past");
+
+            startsInHours(booked.showtimeId(), -2);
+
+            assertTrue(bookings.upcomingForUser(userId).isEmpty(),
+                    "a screening that has started is not upcoming");
+            assertEquals(List.of(booked.bookingReference()),
+                    references(bookings.pastForUser(userId)));
+        } finally {
+            putBack(booked.showtimeId(), original);
+        }
+    }
+
+    /**
+     * Upcoming is soonest first, past is most recent first. The times are
+     * chosen so neither list matches booking order (booked_at DESC, which is
+     * what the old list used), so an ordering that came from the wrong column
+     * would fail rather than agree by accident.
+     */
+    @Test
+    @DisplayName("upcoming is soonest first and past is most recent first")
+    void eachListIsInTheOrderItsReaderWants() {
+        AuthService.Session session = signUp(freshEmail());
+        UUID userId = session.user().getId();
+        String email = session.user().getEmail();
+
+        BookingResponse first = bookAs(userId, email);
+        BookingResponse second = bookElsewhere(userId, email, first.showtimeId());
+        OffsetDateTime firstOriginal = startOf(first.showtimeId());
+        OffsetDateTime secondOriginal = startOf(second.showtimeId());
+
+        try {
+            /* first was booked first and is the sooner screening, so soonest
+               first gives [first, second] where newest booking first would
+               give [second, first]. */
+            startsInHours(first.showtimeId(), 24);
+            startsInHours(second.showtimeId(), 48);
+            assertEquals(List.of(first.bookingReference(), second.bookingReference()),
+                    references(bookings.upcomingForUser(userId)));
+
+            /* first is now the more recent of the two past screenings, so
+               most recent first gives [first, second] again. */
+            startsInHours(first.showtimeId(), -24);
+            startsInHours(second.showtimeId(), -48);
+            assertEquals(List.of(first.bookingReference(), second.bookingReference()),
+                    references(bookings.pastForUser(userId)));
+        } finally {
+            putBack(first.showtimeId(), firstOriginal);
+            putBack(second.showtimeId(), secondOriginal);
+        }
+    }
+
     // helpers
 
     private String freshEmail() {
@@ -201,5 +276,63 @@ class BookingOwnershipTest {
                 .query((rs, rowNum) -> new Target(
                         rs.getLong("showtime_id"), rs.getLong("seat_id")))
                 .single();
+    }
+
+
+    /**
+     * Books a seat on a screening other than the one given, so two bookings
+     * land on two screenings and their order can be told apart.
+     */
+    private BookingResponse bookElsewhere(UUID userId, String email, long notShowtimeId) {
+        Target target = jdbc.sql("""
+                        SELECT sa.showtime_id, sa.seat_id
+                        FROM seat_availability sa
+                        JOIN showtime st ON st.id = sa.showtime_id
+                        WHERE sa.status = 'AVAILABLE'
+                          AND st.starts_at > now()
+                          AND sa.showtime_id <> :showtimeId
+                        LIMIT 1
+                        """)
+                .param("showtimeId", notShowtimeId)
+                .query((rs, rowNum) -> new Target(
+                        rs.getLong("showtime_id"), rs.getLong("seat_id")))
+                .single();
+
+        HoldResponse hold = holds.claim(target.showtimeId(), List.of(target.seatId()), null);
+        return bookings.confirm(hold.holdId(), userId, email);
+    }
+
+    private OffsetDateTime startOf(long showtimeId) {
+        return jdbc.sql("SELECT starts_at FROM showtime WHERE id = :id")
+                .param("id", showtimeId)
+                .query((rs, rowNum) -> rs.getObject("starts_at", OffsetDateTime.class))
+                .single();
+    }
+
+    /**
+     * Moves a screening to now plus the given hours, in SQL. Same approach as
+     * PasswordResetTest: age the data rather than move the clock. The tests
+     * put the original time back, so the shared database ends up as it was.
+     */
+    private void startsInHours(long showtimeId, int hours) {
+        jdbc.sql("""
+                        UPDATE showtime
+                        SET starts_at = now() + make_interval(hours => :hours)
+                        WHERE id = :id
+                        """)
+                .param("hours", hours)
+                .param("id", showtimeId)
+                .update();
+    }
+
+    private void putBack(long showtimeId, OffsetDateTime startsAt) {
+        jdbc.sql("UPDATE showtime SET starts_at = :startsAt WHERE id = :id")
+                .param("startsAt", startsAt)
+                .param("id", showtimeId)
+                .update();
+    }
+
+    private static List<String> references(List<BookingResponse> list) {
+        return list.stream().map(BookingResponse::bookingReference).toList();
     }
 }

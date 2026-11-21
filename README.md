@@ -396,6 +396,8 @@ Twenty-two endpoints. Full contract in
 | `POST /api/auth/reset-password` | set the password and end every session |
 | `GET /api/me` | the signed-in account |
 | `GET /api/me/bookings` | that account's bookings, newest first |
+| `GET /api/me/bookings/upcoming` | that account's bookings for screenings not yet started, soonest first |
+| `GET /api/me/bookings/past` | that account's bookings for screenings that have started, most recent first |
 
 Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details
 with a distinct `type` URI per case, so clients branch on a stable identifier

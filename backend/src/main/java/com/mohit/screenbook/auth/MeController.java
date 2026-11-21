@@ -42,6 +42,17 @@ public class MeController {
         return bookings.forUser(userId(jwt));
     }
 
+    /** Not started yet, soonest first. */
+    @GetMapping("/bookings/upcoming")
+    public List<BookingResponse> upcomingBookings(@AuthenticationPrincipal Jwt jwt) {
+        return bookings.upcomingForUser(userId(jwt));
+    }
+
+    /** Already started, most recent first. */
+    @GetMapping("/bookings/past")
+    public List<BookingResponse> pastBookings(@AuthenticationPrincipal Jwt jwt) {
+        return bookings.pastForUser(userId(jwt));
+    }
     private static UUID userId(Jwt jwt) {
         return UUID.fromString(jwt.getSubject());
     }

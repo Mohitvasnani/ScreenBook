@@ -141,4 +141,16 @@ public class BookingService {
     public List<BookingResponse> forUser(UUID userId) {
         return bookingQuery.forUser(userId);
     }
+
+    /** Screenings that have not started, soonest first. */
+    @Transactional(readOnly = true)
+    public List<BookingResponse> upcomingForUser(UUID userId) {
+        return bookingQuery.upcomingForUser(userId);
+    }
+
+    /** Screenings that have started, most recent first. */
+    @Transactional(readOnly = true)
+    public List<BookingResponse> pastForUser(UUID userId) {
+        return bookingQuery.pastForUser(userId);
+    }
 }

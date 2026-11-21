@@ -1,94 +1,47 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import type { ReactNode } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import styles from "@/css/AccountScreen.module.css";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/services/apiClient";
+import type { Booking } from "@/types/api";
 import { dayAndTime, money, seatNames } from "@/utils/format";
 
 export function MyBookingsScreen() {
   const { user } = useAuth();
-
   /* Keyed on the account, not just the path. Signing out and in as someone
      else on the same tab would otherwise show the previous person's list
      until the fetch landed. */
-  const key = useMemo(() => `my-bookings:${user?.id ?? "none"}`, [user?.id]);
-  const { data, error, loading, reload } = useApi(() => api.myBookings(), key);
-
-  if (loading) {
-    return (
-      <div className={styles.page}>
-        <div className={styles.skeleton} />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={styles.page}>
-        <h1 className={styles.title}>My bookings</h1>
-        <div className={styles.panel}>
-          <p>Could not load your bookings.</p>
-          <div className={styles.actions}>
-            <button type="button" className={styles.quiet} onClick={reload}>
-              Try again
-            </button>
-          </div>
-        </div>
-        <Link href="/account" className={styles.back}>
-          ← Account
-        </Link>
-      </div>
-    );
-  }
-
-  const bookings = data ?? [];
+  const account = user?.id ?? "none";
 
   return (
     <div className={styles.page}>
       <h1 className={styles.title}>My bookings</h1>
       <p className={styles.lede}>
-        Newest first. Every booking stays readable by its reference, so these
-        links work whether or not you are signed in.
+        Every booking stays readable by its reference, so these links work
+        whether or not you are signed in.
       </p>
 
-      {bookings.length === 0 ? (
-        <div className={styles.empty}>
-          <p>Nothing booked on this account yet.</p>
-        </div>
-      ) : (
-        <ul className={styles.list}>
-          {bookings.map((booking) => (
-            <li key={booking.bookingReference}>
-              <Link
-                href={`/bookings/${booking.bookingReference}`}
-                className={styles.item}
-              >
-                <div className={styles.itemTop}>
-                  <span className={styles.itemTitle}>{booking.filmTitle}</span>
-                  <span className={`${styles.itemTotal} tnum`}>
-                    {money(booking.totalPaidMinor, booking.currency)}
-                  </span>
-                </div>
-                <p className={styles.itemMeta}>
-                  {dayAndTime(booking.startsAt)} · {booking.screenName} ·{" "}
-                  {booking.seats.length === 1 ? "seat" : "seats"}{" "}
-                  {seatNames(booking.seats)}
-                </p>
-                <p className={styles.itemRef}>{booking.bookingReference}</p>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+      <BookingSection
+        heading="Upcoming"
+        cacheKey={`my-bookings-upcoming:${account}`}
+        load={api.myUpcomingBookings}
+        emptyText="Nothing coming up on this account."
+      />
+      <BookingSection
+        heading="Past"
+        cacheKey={`my-bookings-past:${account}`}
+        load={api.myPastBookings}
+        emptyText="No past bookings on this account."
+      />
 
       {/* The one thing a user will otherwise think is a bug. Someone who booked
           as a guest and then signed up with the same address finds nothing
           here and concludes their booking is gone. It is not: it is reachable
-          by its reference, and this list matches on the account only. */}
+          by its reference, and these lists match on the account only. */}
       <p className={styles.footnote}>
         Bookings made as a guest do not appear here, even if you used this email
         address at checkout. An address nobody has verified is not proof of
@@ -101,5 +54,75 @@ export function MyBookingsScreen() {
         ← Account
       </Link>
     </div>
+  );
+}
+
+function BookingSection({
+  heading,
+  cacheKey,
+  load,
+  emptyText,
+}: {
+  heading: string;
+  cacheKey: string;
+  load: () => Promise<Booking[]>;
+  emptyText: string;
+}) {
+  const { data, error, loading, reload } = useApi(load, cacheKey);
+  const bookings = data ?? [];
+
+  let body: ReactNode;
+  if (loading) {
+    body = <div className={styles.skeleton} />;
+  } else if (error) {
+    body = (
+      <div className={styles.panel}>
+        <p>Could not load these bookings.</p>
+        <div className={styles.actions}>
+          <button type="button" className={styles.quiet} onClick={reload}>
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  } else if (bookings.length === 0) {
+    body = (
+      <div className={styles.empty}>
+        <p>{emptyText}</p>
+      </div>
+    );
+  } else {
+    body = (
+      <ul className={styles.list}>
+        {bookings.map((booking) => (
+          <li key={booking.bookingReference}>
+            <Link
+              href={`/bookings/${booking.bookingReference}`}
+              className={styles.item}
+            >
+              <div className={styles.itemTop}>
+                <span className={styles.itemTitle}>{booking.filmTitle}</span>
+                <span className={`${styles.itemTotal} tnum`}>
+                  {money(booking.totalPaidMinor, booking.currency)}
+                </span>
+              </div>
+              <p className={styles.itemMeta}>
+                {dayAndTime(booking.startsAt)} · {booking.screenName} ·{" "}
+                {booking.seats.length === 1 ? "seat" : "seats"}{" "}
+                {seatNames(booking.seats)}
+              </p>
+              <p className={styles.itemRef}>{booking.bookingReference}</p>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <section>
+      <h2 className={styles.sectionTitle}>{heading}</h2>
+      {body}
+    </section>
   );
 }

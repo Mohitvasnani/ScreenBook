@@ -304,4 +304,6 @@
      me: () => request<User>("/me"),
    
      myBookings: () => request<Booking[]>("/me/bookings"),
+          myUpcomingBookings: () => request<Booking[]>("/me/bookings/upcoming"),
+     myPastBookings: () => request<Booking[]>("/me/bookings/past"),
    };
