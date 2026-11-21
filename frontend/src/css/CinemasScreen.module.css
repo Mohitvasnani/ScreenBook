@@ -5,21 +5,21 @@
    that size reads as a widget sitting on the page. */
 
 .hero {
+    /* Distance from the viewport edge to the page column. Zero until the
+     viewport is wider than the column. */
+  --gutter: max(0px, calc((100% - var(--page-max)) / 2));
   position: relative;
   width: 100%;
   min-height: clamp(540px, 66vh, 660px);
   overflow: hidden;
 }
 
-/* Deliberately larger than its crop on the top, bottom and right. The canvas
-   has edges; the hero makes sure none of them are on screen. The planet
-   overhangs the right of the viewport, which is the one thing a static
-   mockup cannot show you. */
+
 .globe {
   position: absolute;
   top: -90px;
   bottom: -90px;
-  right: -20vw;
+  right: calc(var(--gutter) - 0.2 * min(100vw, var(--page-max)));
   width: min(1400px, 100vw);
 }
 
@@ -29,7 +29,7 @@
    through the middle of the fade. */
 .scrim {
   position: absolute;
-  left: 0;
+  left: var(--gutter);
   top: 0;
   bottom: 0;
   width: min(820px, 64%);
