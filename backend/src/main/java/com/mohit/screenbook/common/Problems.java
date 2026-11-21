@@ -24,6 +24,7 @@ public final class Problems {
     public static final String SHOWTIME_STARTED = BASE + "/showtime-started";
     public static final String INVALID_RESET_TOKEN = BASE + "/invalid-reset-token";
     public static final String ROUTING_UNAVAILABLE = BASE + "/routing-unavailable";
+    public static final String RATE_LIMITED = BASE + "/rate-limited";
     private Problems() {
     }
 }

@@ -27,12 +27,29 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ProblemDetail> handleApiException(ApiException ex, HttpServletRequest request) {
+        return ResponseEntity.status(ex.getStatus()).body(problemFor(ex, request));
+    }
+
+    /**
+     * The same body as any other ApiException, plus the Retry-After header.
+     * Spring picks this over the general handler because it is the closer
+     * match for the exception's type.
+     */
+    @ExceptionHandler(RateLimitedException.class)
+    ResponseEntity<ProblemDetail> handleRateLimited(RateLimitedException ex,
+                                                    HttpServletRequest request) {
+        return ResponseEntity.status(ex.getStatus())
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()))
+                .body(problemFor(ex, request));
+    }
+
+    private ProblemDetail problemFor(ApiException ex, HttpServletRequest request) {
         ProblemDetail body = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getMessage());
         body.setType(URI.create(ex.getType()));
         body.setTitle(ex.getTitle());
         body.setInstance(URI.create(request.getRequestURI()));
         ex.getExtras().forEach(body::setProperty);
-        return ResponseEntity.status(ex.getStatus()).body(body);
+        return body;
     }
 
     /**

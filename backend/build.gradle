@@ -44,7 +44,7 @@ dependencies {
     // itself rather than by a third-party DSL. The resource-server filter does
     // the verifying; a custom resolver points it at the cookie instead of the
     // Authorization header.
-
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 

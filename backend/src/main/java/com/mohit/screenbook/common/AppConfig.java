@@ -11,8 +11,7 @@ import java.time.Clock;
 import com.mohit.screenbook.routing.RoutingProperties;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableAsync;
-/**
+import com.mohit.screenbook.ratelimit.RateLimitProperties;/**
  * Application-wide beans and the OpenAPI document's metadata.
  */
 @Configuration
@@ -21,7 +20,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @EnableConfigurationProperties({
         PricingProperties.class,
         SeedProperties.class,
-        RoutingProperties.class
+        RoutingProperties.class,
+        RateLimitProperties.class
 })
 @OpenAPIDefinition(info = @Info(
         title = "ScreenBook API",

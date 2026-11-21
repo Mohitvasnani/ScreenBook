@@ -10,7 +10,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-
+import com.mohit.screenbook.common.RateLimitedException;
+import com.mohit.screenbook.ratelimit.RateLimitProperties;
+import com.mohit.screenbook.ratelimit.RateLimiter;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +26,8 @@ public class RoutingService {
 
     private static final Logger log = LoggerFactory.getLogger(RoutingService.class);
 
+    /** One bucket for the whole service: the quota belongs to the API key, not to a caller. */
+    private static final String PROVIDER_BUDGET = "rl:routing:provider";
     record OrsResponse(List<Feature> features) {}
     record Feature(Geometry geometry, Properties properties) {}
     record Geometry(double[][] coordinates) {}
@@ -33,10 +37,15 @@ public class RoutingService {
     private final RestClient http;
     private final CinemaQuery cinemas;
     private final String apiKey;
+    private final RateLimiter limiter;
+    private final RateLimitProperties.Bucket budget;
 
-    RoutingService(RestClient.Builder builder, RoutingProperties properties, CinemaQuery cinemas) {
+    RoutingService(RestClient.Builder builder, RoutingProperties properties, CinemaQuery cinemas,
+                   RateLimiter limiter, RateLimitProperties limits) {
         this.apiKey = properties.apiKey() == null ? "" : properties.apiKey();
         this.cinemas = cinemas;
+        this.limiter = limiter;
+        this.budget = limits.routing();
         this.http = builder
                 .baseUrl(properties.baseUrl())
                 .defaultHeader("Authorization", apiKey)
@@ -53,6 +62,16 @@ public class RoutingService {
 
         CinemaDetail cinema = cinemas.detail(key.cinemaId());
 
+        /* The budget is spent here: after the checks that need no provider,
+           before the one call that does. A cache hit never reaches this line,
+           so only a request that would really cost a provider call counts.
+           A refusal throws, and @Cacheable does not cache an exception. */
+        RateLimiter.Decision decision = limiter.tryAcquire(
+                PROVIDER_BUDGET, budget.capacity(), budget.refillPerSecond());
+        if (!decision.allowed()) {
+            throw new RateLimitedException(
+                    "Routing is busy. Try again shortly.", decision.retryAfterSeconds());
+        }
         OrsResponse response;
         try {
             response = http.post()
