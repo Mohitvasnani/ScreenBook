@@ -22,5 +22,5 @@
    
    /* Mirrors the server value in docs/api-contract.md. */
    export const HOLD_TTL_SECONDS = 300;
-   export const MAX_SEATS_GUEST = 3;
-   export const MAX_SEATS_MEMBER = 6;
+   export const MAX_SEATS_GUEST = 5;
+   export const MAX_SEATS_MEMBER = 10;

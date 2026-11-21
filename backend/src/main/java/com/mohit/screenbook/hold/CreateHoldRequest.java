@@ -28,7 +28,7 @@ public record CreateHoldRequest(
         @NotNull(message = "is required") Long showtimeId,
 
         @NotNull(message = "is required")
-        @Size(min = 1, max = 6, message = "must contain between 1 and 6 seats")
+        @Size(min = 1, max = 20, message = "must contain between 1 and 20 seats")
         List<@NotNull(message = "must not contain nulls") Long> seatIds
 ) {
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
+import { PasswordInput } from "@/components/PasswordInput";
 
 import { useAuth } from "@/components/AuthProvider";
 import styles from "@/css/AuthScreen.module.css";
@@ -108,10 +109,9 @@ export function LoginScreen() {
           <label className={styles.label} htmlFor="password">
             Password
           </label>
-          <input
+                    <PasswordInput
             id="password"
             className={styles.input}
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             /* current-password, not password: it tells a password manager to

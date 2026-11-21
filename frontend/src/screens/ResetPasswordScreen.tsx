@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-
+import { PasswordInput } from "@/components/PasswordInput";
 import styles from "@/css/AuthScreen.module.css";
 import { api } from "@/services/apiClient";
 import { AUTH_ENABLED } from "@/services/apiConfig";
@@ -124,10 +124,9 @@ export function ResetPasswordScreen() {
           <label className={styles.label} htmlFor="password">
             New password
           </label>
-          <input
+                    <PasswordInput
             id="password"
             className={styles.input}
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             /* new-password, so a manager offers to generate and then save one

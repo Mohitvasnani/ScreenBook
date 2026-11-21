@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-
+import { PasswordInput } from "@/components/PasswordInput";
 import { useAuth } from "@/components/AuthProvider";
 import styles from "@/css/AuthScreen.module.css";
-import { AUTH_ENABLED } from "@/services/apiConfig";
+import { AUTH_ENABLED, MAX_SEATS_GUEST, MAX_SEATS_MEMBER } from "@/services/apiConfig";
 import { ApiError } from "@/services/problemDetails";
 import { safeNext } from "@/utils/redirects";
 
@@ -78,8 +78,9 @@ export function SignupScreen() {
     <div className={styles.page}>
       <h1 className={styles.title}>Create an account</h1>
       <p className={styles.lede}>
-        Keeps your bookings in one place and raises the limit from three seats to
-        six. Booking as a guest stays available either way.
+                Keeps your bookings in one place and raises the limit from{" "}
+        {MAX_SEATS_GUEST} seats to {MAX_SEATS_MEMBER}. Booking as a guest stays
+        available either way.
       </p>
 
       <form className={styles.form} onSubmit={submit}>
@@ -137,10 +138,9 @@ export function SignupScreen() {
           <label className={styles.label} htmlFor="password">
             Password
           </label>
-          <input
+                    <PasswordInput
             id="password"
             className={styles.input}
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             /* new-password, so a password manager offers to generate one
