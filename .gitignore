@@ -20,3 +20,4 @@ backend/*.json
 cinemas.json
 tools/osm_cinemas.json
 icon_ideas/
+tools/load/results/
