@@ -80,6 +80,10 @@ public class SecurityConfig {
     @Bean
     BearerTokenResolver cookieTokenResolver() {
         return request -> {
+                        /* The auth endpoints never need the access token, and an expired
+               one is rejected before the controller runs, which would stop
+               the refresh that replaces it. */
+            if (request.getRequestURI().startsWith("/api/auth/")) return null;
             Cookie[] cookies = request.getCookies();
             if (cookies == null) return null;
             for (Cookie cookie : cookies) {

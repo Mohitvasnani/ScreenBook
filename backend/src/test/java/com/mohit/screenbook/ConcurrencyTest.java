@@ -60,6 +60,9 @@ class ConcurrencyTest {
      */
     private static final int CONTENDERS = 8;
 
+    /** Any valid address. These tests are about the seat, not the owner. */
+    private static final String GUEST_EMAIL = "guest@example.com";
+
     @Autowired
     HoldService holds;
 
@@ -103,7 +106,7 @@ class ConcurrencyTest {
 
         List<String> outcomes = runTogether(2, () -> {
             try {
-                bookings.confirm(holdId, null, null);
+                bookings.confirm(holdId, null, GUEST_EMAIL);
                 return "WON";
             } catch (HoldAlreadyConvertedException e) {
                 return "LOST";
@@ -223,8 +226,8 @@ class ConcurrencyTest {
         HoldResponse hold = holds.claim(target.showtimeId(), List.of(target.seatId()), null);
         String key = "replay-" + UUID.randomUUID();
 
-        BookingResponse first = idempotent.confirm(hold.holdId(), key, null, null);
-        BookingResponse second = idempotent.confirm(hold.holdId(), key, null, null);
+        BookingResponse first = idempotent.confirm(hold.holdId(), key, null, GUEST_EMAIL);
+        BookingResponse second = idempotent.confirm(hold.holdId(), key, null, GUEST_EMAIL);
 
         assertEquals(first.bookingReference(), second.bookingReference(),
                 "the retry should return the original booking");
@@ -243,10 +246,10 @@ class ConcurrencyTest {
         Target target = someAvailableSeat();
         HoldResponse hold = holds.claim(target.showtimeId(), List.of(target.seatId()), null);
 
-        idempotent.confirm(hold.holdId(), null, null, null);
+        idempotent.confirm(hold.holdId(), null, null, GUEST_EMAIL);
 
         assertThrows(HoldAlreadyConvertedException.class,
-                () -> idempotent.confirm(hold.holdId(), null, null, null));
+                () -> idempotent.confirm(hold.holdId(), null, null, GUEST_EMAIL));
     }
 
     /**
@@ -263,10 +266,10 @@ class ConcurrencyTest {
         HoldResponse second = holds.claim(showtimeId, List.of(pair.get(1).seatId()), null);
 
         String key = "reuse-" + UUID.randomUUID();
-        idempotent.confirm(first.holdId(), key, null, null);
+        idempotent.confirm(first.holdId(), key, null, GUEST_EMAIL);
 
         assertThrows(IdempotencyKeyReusedException.class,
-                () -> idempotent.confirm(second.holdId(), key, null, null));
+                () -> idempotent.confirm(second.holdId(), key, null, GUEST_EMAIL));
     }
 
     /**
@@ -287,7 +290,7 @@ class ConcurrencyTest {
 
         List<String> outcomes = runTogether(2, () -> {
             try {
-                return idempotent.confirm(hold.holdId(), key, null, null).bookingReference();
+                return idempotent.confirm(hold.holdId(), key, null, GUEST_EMAIL).bookingReference();
             } catch (IdempotencyKeyInProgressException e) {
                 return "IN_PROGRESS";
             }

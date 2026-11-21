@@ -12,8 +12,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.mohit.screenbook.common.ValidationFailedException;
 import java.time.Clock;
+import com.mohit.screenbook.common.Emails;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,13 @@ public class BookingService {
      */
     @Transactional
     public BookingResponse confirm(UUID holdId, UUID userId, String email) {
+                /* No account and no address leaves a booking nobody can be told
+           about. Checked first so a refused request touches nothing, and
+           here rather than in the controller so no caller can skip it. */
+        if (userId == null && Emails.normalise(email) == null) {
+            throw new ValidationFailedException(
+                    "An email address is required to book without an account.");
+        }
         SeatHold hold = holds.findById(holdId)
                 .orElseThrow(() -> new NotFoundException(
                         "No hold with id %s.".formatted(holdId)));

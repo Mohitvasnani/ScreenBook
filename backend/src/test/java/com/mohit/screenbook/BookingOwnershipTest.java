@@ -18,7 +18,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.UUID;
-
+import com.mohit.screenbook.common.ValidationFailedException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -136,6 +136,23 @@ class BookingOwnershipTest {
                 "a key tied to another account must be refused, never replayed");
     }
 
+    /**
+     * The rule that a booking needs an owner or an address. The last step is
+     * the point: the refusal happens before anything is written, so the same
+     * hold is still good once an address is supplied.
+     */
+    @Test
+    @DisplayName("a booking with no account and no address is refused before anything is written")
+    void guestBookingNeedsAnEmail() {
+        UUID holdId = guestHold();
+
+        assertThrows(ValidationFailedException.class,
+                () -> bookings.confirm(holdId, null, null));
+        assertThrows(ValidationFailedException.class,
+                () -> bookings.confirm(holdId, null, "   "));
+
+        assertNotNull(bookings.confirm(holdId, null, freshEmail()));
+    }
     // helpers
 
     private String freshEmail() {

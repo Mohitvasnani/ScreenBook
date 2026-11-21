@@ -81,7 +81,7 @@ class PriceFreezeTest {
                     listedPriceOf(seat.seatId(), seat.showtimeId()),
                     "the listed price should have moved, or this test proves nothing");
 
-            BookingResponse booked = bookings.confirm(held.holdId(), null, null);
+            BookingResponse booked = bookings.confirm(held.holdId(), null, "price-freeze@example.com");
 
             assertEquals(quoted, booked.totalPaidMinor(),
                     "the booking must charge what the hold quoted, not today's price");

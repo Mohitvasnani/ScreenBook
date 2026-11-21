@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { HoldCountdown } from "@/components/HoldCountdown";
@@ -67,6 +67,28 @@ export function CheckoutScreen() {
      hold was already past it when the page loaded. */
   const isOver = expired || hold?.status === "EXPIRED";
 
+  /* Seats this page holds go back when it is left, so pressing back does not
+     lock you out of your own seats for five minutes. A courtesy only: the
+     server's expiry is the guarantee, which is why a refresh or a closed tab
+     needs nothing here. settled is set once the hold has an outcome of its
+     own, a booking or an explicit release.
+
+     The release waits a tick so Strict Mode's mount, unmount, mount in
+     development does not release the hold it was just given. */
+  const settledRef = useRef(false);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      setTimeout(() => {
+        if (mountedRef.current || settledRef.current) return;
+        api.releaseHold(holdId).catch(() => {});
+      }, 0);
+    };
+  }, [holdId]);
+
   async function confirm() {
     setBusy(true);
     setProblem(null);
@@ -81,6 +103,7 @@ export function CheckoutScreen() {
         keyFor(address),
         address || undefined,
       );
+            settledRef.current = true;
       router.push(`/bookings/${booking.bookingReference}`);
     } catch (err) {
       if (err instanceof ApiError && err.is("hold-expired")) {
@@ -94,14 +117,16 @@ export function CheckoutScreen() {
         /* The previous press is still being processed. Not a failure, so this
            says so rather than suggesting something went wrong. */
         setProblem("Still confirming. Give it a second and press Confirm again.");
-      } else {
-        setProblem("Could not confirm. Try again.");
+            } else if (err instanceof ApiError && err.is("validation-failed")) {
+        /* The server's own sentence, for example a malformed address. */
+        setProblem(err.message);
       }
       setBusy(false);
     }
   }
 
   async function release() {
+    settledRef.current = true;
     setBusy(true);
     try {
       await api.releaseHold(holdId);
@@ -223,7 +248,7 @@ export function CheckoutScreen() {
               <div className={styles.field}>
                 <label className={styles.fieldLabel} htmlFor="email">
                   Email for your confirmation
-                  <span className={styles.optional}>optional</span>
+                 
                 </label>
                 <input
                   id="email"
@@ -236,11 +261,11 @@ export function CheckoutScreen() {
                   placeholder="you@example.com"
                   disabled={busy}
                 />
-                <p className={styles.fieldHint}>
-                  Leave it blank and your booking reference on the next screen is
-                  the only record you get, so save it. An address here is not an
-                  account: nobody has verified it, so it is never used to decide
-                  who a booking belongs to.
+                                <p className={styles.fieldHint}>
+                                  Required for a booking without an account. Your confirmation
+                  is sent here. An address here is not an account: nobody has
+                  verified it, so it is never used to decide who a booking
+                  belongs to.
                 </p>
               </div>
             )}
@@ -251,7 +276,7 @@ export function CheckoutScreen() {
               type="button"
               className={styles.confirm}
               onClick={confirm}
-              disabled={busy}
+                            disabled={busy || (!user && !email.trim())}
             >
               {busy
                 ? "Confirming..."

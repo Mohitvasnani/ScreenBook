@@ -11,8 +11,10 @@ import java.util.UUID;
  * seats and showtime, so re-sending them would allow a combination that
  * disagrees with the server.
  *
- * email is optional and exists for guests, who otherwise have nothing but the
- * reference. A signed-in booking is found by its user instead.
+ * email is for guests, who otherwise have nothing but the reference. It is
+ * required when nobody is signed in; BookingService enforces that, because
+ * only the service knows whether there is a user. A signed-in booking is
+ * found by its user instead.
  */
 public record CreateBookingRequest(
         @NotNull(message = "is required") UUID holdId,

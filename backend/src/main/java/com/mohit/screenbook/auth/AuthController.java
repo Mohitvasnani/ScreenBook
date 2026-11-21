@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
+import com.mohit.screenbook.common.InvalidRefreshTokenException;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.time.Duration;
 
@@ -25,16 +27,16 @@ public class AuthController {
 
     private final AuthService auth;
     private final PasswordResetService reset;
-    private final AccessTokens accessTokens;
+
     private final boolean secureCookies;
     private final Duration refreshTtl;
 
-    AuthController(AuthService auth, PasswordResetService reset, AccessTokens accessTokens,
+    AuthController(AuthService auth, PasswordResetService reset,
                    @Value("${screenbook.cookies.secure}") boolean secureCookies,
                    @Value("${screenbook.jwt.refresh-ttl-days}") long refreshTtlDays) {
         this.auth = auth;
         this.reset = reset;
-        this.accessTokens = accessTokens;
+
         this.secureCookies = secureCookies;
         this.refreshTtl = Duration.ofDays(refreshTtlDays);
     }
@@ -64,14 +66,25 @@ public class AuthController {
      */
     @PostMapping("/refresh")
     public ResponseEntity<MeResponse> refresh(
-            @CookieValue(name = AuthCookies.REFRESH, required = false) String refreshToken) {
+            @CookieValue(name = AuthCookies.REFRESH, required = false) String refreshToken,
+            HttpServletResponse response) {
 
-        if (refreshToken == null || refreshToken.isBlank()) {
-            /* No cookie at all is the same answer as a bad one. Anything else
-               would tell a caller whether a session had ever existed. */
-            throw new com.mohit.screenbook.common.InvalidRefreshTokenException();
+        try {
+            if (refreshToken == null || refreshToken.isBlank()) {
+                /* No cookie at all is the same answer as a bad one. Anything
+                   else would tell a caller whether a session had ever existed. */
+                throw new InvalidRefreshTokenException();
+            }
+            return withSession(HttpStatus.OK, auth.refresh(refreshToken));
+        } catch (InvalidRefreshTokenException e) {
+            /* The access cookie outlives its token, so after a failed
+               refresh it would be sent and rejected on every request. */
+            response.addHeader(HttpHeaders.SET_COOKIE,
+                    AuthCookies.clearAccess(secureCookies).toString());
+            response.addHeader(HttpHeaders.SET_COOKIE,
+                    AuthCookies.clearRefresh(secureCookies).toString());
+            throw e;
         }
-        return withSession(HttpStatus.OK, auth.refresh(refreshToken));
     }
 
     /**
@@ -119,7 +132,7 @@ public class AuthController {
         AppUser user = session.user();
         return ResponseEntity.status(status)
                 .header(HttpHeaders.SET_COOKIE,
-                        AuthCookies.access(session.accessToken(), accessTokens.ttl(), secureCookies)
+                        AuthCookies.access(session.accessToken(), refreshTtl, secureCookies)
                                 .toString())
                 .header(HttpHeaders.SET_COOKIE,
                         AuthCookies.refresh(session.refreshToken(), refreshTtl, secureCookies)
