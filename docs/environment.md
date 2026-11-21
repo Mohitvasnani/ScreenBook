@@ -8,7 +8,7 @@ values rather than consuming them.
 | Frontend, local | `NEXT_PUBLIC_API_MODE` |
 | Frontend, Vercel | `NEXT_PUBLIC_API_MODE`, `API_ORIGIN` |
 | Backend, local | `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE` |
-| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE`, `MAIL_PROVIDER`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `RESET_LINK_BASE`, `ORS_API_KEY` |
+| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE`, `MAIL_PROVIDER`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `RESET_LINK_BASE`, `BOOKING_LINK_BASE`, `ORS_API_KEY` |
 | Neon | none |
 | Brevo | none; it supplies the API key |
 | openrouteservice | none; it supplies the API key |
@@ -95,6 +95,7 @@ Every variable, with the default it falls back to:
 | `BREVO_SENDER_EMAIL` | empty | Required when `MAIL_PROVIDER=brevo`. Must be a verified sender |
 | `BREVO_SENDER_NAME` | `ScreenBook` | Display name on the From line |
 | `RESET_LINK_BASE` | `http://localhost:3000/reset-password` | A **frontend** URL. The route the emailed link points at |
+| `BOOKING_LINK_BASE` | `http://localhost:3000/bookings` | A **frontend** URL. The booking confirmation email links to this plus the reference. Left at the default in production, the email points at localhost |
 | `ORS_API_KEY` | empty | Optional. Empty means `GET /api/cinemas/{id}/route` answers 503 and the client keeps its straight lines |
 
 ### Sending email

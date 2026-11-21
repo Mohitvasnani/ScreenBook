@@ -64,9 +64,11 @@ read: there are over six thousand upcoming screenings across two countries.
 
 **Shows:** a full-bleed hero with a globe on the right, running off the edge of
 the screen, and a panel on the left carrying an eyebrow, the heading, a
-two-country toggle, a search box and a row of glass controls. Under it, the
-same cinemas as a list: grouped by country then city when no country is chosen,
-by city when one is.
+two-country toggle, a search box and a row of glass controls. Under it, a list
+that depends on what has been chosen. With nothing chosen it is the forty
+cities, grouped by country and biggest first, each with its cinema count, and
+no cinemas at all. Choosing a city, from a card, the search box or the globe,
+lists that city's cinemas as links.
 
 **The city chips are gone, and the search box replaced them.** Five shortcuts
 plus "All cities" was a reasonable row at 130 cinemas. At 980 it stopped being
@@ -74,6 +76,14 @@ one: London alone has 127, so a shortcut to a city no longer leads to a list
 anybody scrolls, and picking five cities out of forty claims a ranking the data
 does not support. The search box does the same job without the claim, and it
 works with no country chosen, which the chips never did.
+
+**The opening list is cities, not cinemas.** Listing all 980 cinemas as cards on
+arrival answered a question nobody had asked, and the first thing anyone saw was
+whichever city sorted first. It is now the forty cities from the rollup, ordered
+by cinema count with the count on the card, so the order says what it is rather
+than ranking the cities. The cinemas appear once one is picked. A city is a
+button rather than a link because choosing one changes this page instead of
+leaving it.
 
 **The globe is a MapLibre map, not an image.** Globe projection over MapTiler's
 dataviz-dark, with every country that is not GB or IN washed out in the page
@@ -131,14 +141,15 @@ it into the corner of the frame. A radius takes none for a third reason: the
 circle is a measurement, and at 42 degrees a 5km one draws half again as wide
 as it is tall.
 
-**States:** nothing chosen (planet, both countries listed), country, city,
+**States:** nothing chosen (planet, both countries' cities listed), country, city,
 cinema, radius. Plus loading, error with retry, an empty radius, road routes
 loading and unavailable, and a declined geolocation permission,
 which is a quiet line of text rather than an error because the list underneath
 is a complete way to use the site.
 
 **Accessibility:** a canvas cannot be read out, so the list below is the
-equivalent rather than a fallback, and the page says so. The map is not hidden
+equivalent rather than a fallback: cities first, then the chosen city's cinemas
+as links, and the page says so. The map is not hidden
 from assistive tech, because that would hide the tile credit with it.
 
 Its sibling `/cinemas/[cinemaId]` is the showtimes listing for one building:
@@ -153,7 +164,7 @@ time is printed.
 **Shows:** a header with the film, screen and time, then a seat map of 120 seats
 in 10 rows (A to J) of 12. Every seat carries its tier and its own price.
 
-**Action:** tap up to six available seats to select them, tap again to
+**Action:** tap up to ten available seats (five as a guest) to select them, tap again to
 deselect, then press Hold. That claims them for 300 seconds and moves to
 checkout. The summary lists each chosen seat with its own price and a running
 total, and each can be removed from the list as well as from the map.

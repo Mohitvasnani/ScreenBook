@@ -11,7 +11,7 @@ construction rather than by discovery.
   Indian cinema, pence at a UK one. Nothing converts between them anywhere
 - Errors use RFC 9457 problem details (`application/problem+json`)
 - Hold TTL: 300 seconds
-- Up to 3 seats per hold as a guest, 6 signed in, claimed all or nothing
+- Up to 5 seats per hold as a guest, 10 signed in, claimed all or nothing
 - `Idempotency-Key` honoured on `POST /api/bookings`, so a retry returns the
   original booking rather than a conflict
 - Accounts are optional. Every booking endpoint works signed in or not, which
@@ -159,9 +159,11 @@ Every cinema, for the map and for the list below it to group by city.
 No pagination. The map draws all of them at once, so paging would be a client
 asking for something it cannot use. 980 rows is about 160KB, which is the
 number this endpoint is judged on, and the answer to it is the city rollup in
-section 2 rather than a page size: the planet view needs 40 rows, not 980, and
-only asks for the full list once the camera is close enough for individual
-cinemas to be worth drawing.
+section 2 rather than a page size: the opening list needs 40 rows, not 980. The
+home page still fetches the full list on load, because the map's build effect
+needs every cinema, so the payload itself has not shrunk. Fetching it lazily,
+once the camera is close enough for individual cinemas to be worth drawing, is
+the next step and is not built.
 
 `country` is a filter rather than a required parameter, because the globe's
 opening state shows both markets at once. An unrecognised code is an empty list
@@ -185,8 +187,9 @@ with none still appears on the map as a building that exists.
 ## 2. `GET /api/cinemas/cities`
 
 One row per city: how many cinemas are in it and where its middle is. This is
-what the globe draws before it is close enough for individual cinemas to be
-worth rendering.
+what the home page's opening list and its search box read: forty rows instead of
+980. The globe's own city pins are still computed in the browser from the full
+list.
 
 **200**
 
@@ -708,7 +711,7 @@ and the other with a `CASE` per seat.
 
 ## 10. `POST /api/holds`
 
-Claim one to six seats for 300 seconds, all or nothing.
+Claim one to ten seats for 300 seconds, all or nothing.
 
 **Request**
 
@@ -716,12 +719,12 @@ Claim one to six seats for 300 seconds, all or nothing.
 { "showtimeId": 1, "seatIds": [1002, 1003] }
 ```
 
-`seatIds` carries 1 to 3 entries as a guest and 1 to 6 signed in, in the order
+`seatIds` carries 1 to 5 entries as a guest and 1 to 10 signed in, in the order
 the customer picked them, with no seat repeated. The cap is enforced by the
 server, not just the UI: a cap that only exists in the client is not a cap.
 
 The higher cap is the one concrete benefit of an account, and it is deliberately
-a modest one. A guest is anonymous, so six seats held by a guest is six seats
+a modest one. A guest is anonymous, so five seats held by a guest is five seats
 anyone can tie up leaving nothing behind; an account at least attaches the
 behaviour to something.
 
@@ -947,12 +950,21 @@ knows its seats and its showtime, so re-sending them would let a client submit
 a combination that disagrees with the server, and the server would have to
 decide which to trust.
 
-`email` is optional and exists for guests, who otherwise have nothing but the
-reference. It is stored so a confirmation can be sent and is never used to
+`email` is required for a guest and optional when signed in, where the
+account's address is used instead. With no session and no address the request
+is refused with a **422** `problems/validation-failed` before anything is
+written. The address is where the confirmation email goes and is never used to
 decide who a booking belongs to, for the reason in section 22. A signed-in
 booking is found by its account instead, and the account comes from the session
 cookie rather than the body, because a client-supplied user id is a
 client-supplied claim about who it is.
+
+**The confirmation email** goes out after the booking commits and off the
+request thread, to the address in the request or else the account's, with a link
+to `BOOKING_LINK_BASE/{reference}`. A provider failure is logged and the booking
+stands. A replayed idempotency key returns the original booking and sends
+nothing, because the email is triggered by the commit and a replay commits
+nothing.
 
 **201**
 
@@ -1155,6 +1167,11 @@ up establishes who it is in one request rather than refreshing and then asking.
 already spent, or absent. One answer for all four, so no case can be told from
 another.
 
+A failed refresh also answers with `Set-Cookie` clearing both session cookies.
+`sb_access` outlives its token (see Sessions and cookies), so a browser holding
+a dead session would otherwise send an expired token on every request and be
+rejected each time.
+
 ### Rotation and reuse detection
 
 Every refresh invalidates the token it was called with and issues a new one.
@@ -1350,7 +1367,7 @@ predicate, which is what keeps it usable.
 
 | Cookie | Path | Lifetime | Contents |
 |---|---|---|---|
-| `sb_access` | `/api` | 15 minutes | A JWT whose only claim is `sub` |
+| `sb_access` | `/api` | 30 days (the token inside is valid for 15 minutes) | A JWT whose only claim is `sub` |
 | `sb_refresh` | `/api/auth` | 30 days | An opaque random token |
 | `XSRF-TOKEN` | `/` | session | The CSRF token, readable by the page |
 
@@ -1367,6 +1384,13 @@ Revocation happens at refresh time, so fifteen minutes is the longest a revoked
 session stays alive. The refresh token is long because it is checked every time
 and can be deleted.
 
+The access cookie outlives its token on purpose. When the cookie died with the
+token, a signed-in booking made after fifteen minutes arrived with no
+credential at all, was treated as a guest booking, and nothing prompted a
+refresh. With the cookie kept for the refresh lifetime, an expired token is a
+401 and the client's refresh-and-retry runs. The token's own `exp` still
+enforces the fifteen minutes.
+
 Both sides are served from one origin: Next.js rewrites `/api/*` to this
 service, so the session cookie is first-party. Safari and Chrome both block
 third-party cookies, so a cookie set directly by the API's own hostname would be
@@ -1377,6 +1401,11 @@ The token is read from the cookie by a custom `BearerTokenResolver` rather than
 from an `Authorization` header. Returning no token leaves the request anonymous,
 which is what makes guest checkout work: signature checking, expiry and the
 security context stay the framework's job instead of a hand-rolled filter.
+
+The resolver returns no token on `/api/auth/**`. Those endpoints never need the
+access token, and an expired one is rejected before the controller runs, which
+would stop the refresh that replaces it and block login for a browser holding a
+stale cookie.
 
 ### CSRF
 
@@ -1403,7 +1432,7 @@ minor on a service holding nothing worth planting.
 
 Accounts change three things and nothing else.
 
-1. **The seat cap.** 3 seats per hold as a guest, 6 signed in.
+1. **The seat cap.** 5 seats per hold as a guest, 10 signed in.
 2. **Attribution.** A booking confirmed while signed in records `user_id` and
    appears in section 22.
 3. **Nothing else.** Every endpoint in sections 1 to 14 behaves exactly as it did
