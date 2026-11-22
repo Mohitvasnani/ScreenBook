@@ -1,5 +1,6 @@
 package com.mohit.screenbook.ratelimit;
-
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -72,9 +73,22 @@ public class RateLimiter {
             new DefaultRedisScript<>(TOKEN_BUCKET, Long.class);
 
     private final StringRedisTemplate redis;
+    private final Counter allowed;
+    private final Counter denied;
+    private final Counter unavailable;
 
-    RateLimiter(StringRedisTemplate redis) {
+    RateLimiter(StringRedisTemplate redis, MeterRegistry meters) {
         this.redis = redis;
+        this.allowed = decisions(meters, "allowed");
+        this.denied = decisions(meters, "denied");
+        this.unavailable = decisions(meters, "unavailable");
+    }
+
+    /* Tagged by outcome only. A key tag would grow with every caller. */
+    private static Counter decisions(MeterRegistry meters, String outcome) {
+        return Counter.builder("screenbook.ratelimit.decisions")
+                .tag("outcome", outcome)
+                .register(meters);
     }
 
     /** What the limiter decided. retryAfterSeconds is 0 when allowed. */
@@ -97,10 +111,13 @@ public class RateLimiter {
             Long retryAfter = redis.execute(SCRIPT, List.of(key),
                     Integer.toString(capacity), Double.toString(refillPerSecond));
             if (retryAfter == null || retryAfter == 0) {
+                allowed.increment();
                 return Decision.PERMITTED;
             }
+            denied.increment();
             return Decision.denied(retryAfter);
         } catch (DataAccessException e) {
+            unavailable.increment();
             log.warn("Rate limiter unavailable, allowing the request: {}", e.getMessage());
             return Decision.PERMITTED;
         }

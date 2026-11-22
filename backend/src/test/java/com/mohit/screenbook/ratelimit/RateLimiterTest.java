@@ -1,5 +1,5 @@
 package com.mohit.screenbook.ratelimit;
-
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +43,7 @@ class RateLimiterTest {
                     .withExposedPorts(6379);
 
     static RateLimiter limiter;
+    static final SimpleMeterRegistry METERS = new SimpleMeterRegistry();
 
     @BeforeAll
     static void connect() {
@@ -65,11 +66,17 @@ class RateLimiterTest {
         factory.afterPropertiesSet();
         StringRedisTemplate template = new StringRedisTemplate(factory);
         template.afterPropertiesSet();
-        return new RateLimiter(template);
+        return new RateLimiter(template, METERS);
     }
 
     private static String key() {
         return "test:" + UUID.randomUUID();
+    }
+
+
+    private static double count(String outcome) {
+        return METERS.get("screenbook.ratelimit.decisions")
+                .tag("outcome", outcome).counter().count();
     }
 
     @Test
@@ -84,6 +91,31 @@ class RateLimiterTest {
         assertFalse(denied.allowed());
         assertTrue(denied.retryAfterSeconds() >= 1 && denied.retryAfterSeconds() <= 10,
                 "retry after was " + denied.retryAfterSeconds());
+    }
+
+
+    @Test
+    @DisplayName("every decision is counted by outcome")
+    void countsDecisions() {
+        String key = key();
+        double allowedBefore = count("allowed");
+        double deniedBefore = count("denied");
+
+        limiter.tryAcquire(key, 1, 0.001);
+        limiter.tryAcquire(key, 1, 0.001);
+
+        assertEquals(1, count("allowed") - allowedBefore);
+        assertEquals(1, count("denied") - deniedBefore);
+    }
+
+    @Test
+    @DisplayName("a request let through because Redis is down is counted as unavailable")
+    void countsFailOpen() {
+        double before = count("unavailable");
+
+        assertTrue(limiterOn("localhost", 1).tryAcquire(key(), 1, 1).allowed());
+
+        assertEquals(1, count("unavailable") - before);
     }
 
     @Test
