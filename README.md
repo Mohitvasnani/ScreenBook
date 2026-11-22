@@ -351,10 +351,12 @@ flowchart LR
     V["Next.js 16<br/>Vercel"]
     A["Spring Boot 4<br/>Render, Frankfurt"]
     N[("PostgreSQL 18<br/>Neon, Frankfurt")]
+    R[("Redis<br/>Upstash")]
 
     U -->|"page load"| V
     U -->|"/api, CORS"| A
     A -->|"JDBC over TLS"| N
+    A -->|"route budget"| R
 ```
 
 Writes go through JPA entities, because they need the unit of work and the
@@ -539,8 +541,9 @@ either half alone.
   seat" from a locking convention into the schema, where no future code path
   can bypass it. `released_at` already exists for its predicate.
 - **Hexagonal refactor** with ArchUnit enforcing the module boundaries.
-- **Redis** is in for rate limiting on the route endpoint. A distributed lock
-  is deliberately not planned: Postgres already fills that role.
+- **The route cache in Redis**, only if `cache.gets` on real traffic says the
+  in-process cache loses too much to restarts. A distributed lock is
+  deliberately not planned: Postgres already fills that role.
 - **Kubernetes and Helm** on Oracle Cloud.
 
 ## Stack

@@ -1,17 +1,19 @@
 # Environment variables
 
-Six places. Neon, Brevo and openrouteservice are the odd ones out: they supply
-values rather than consuming them.
+Eight places. Neon, Brevo, openrouteservice, Upstash and MapTiler are the odd
+ones out: they supply values rather than consuming them.
 
 | Where | Variables |
 |---|---|
-| Frontend, local | `NEXT_PUBLIC_API_MODE` |
-| Frontend, Vercel | `NEXT_PUBLIC_API_MODE`, `API_ORIGIN` |
+| Frontend, local | `NEXT_PUBLIC_API_MODE`, `NEXT_PUBLIC_MAPTILER_KEY` |
+| Frontend, Vercel | `NEXT_PUBLIC_API_MODE`, `API_ORIGIN`, `NEXT_PUBLIC_MAPTILER_KEY` |
 | Backend, local | `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE` |
-| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE`, `MAIL_PROVIDER`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `RESET_LINK_BASE`, `BOOKING_LINK_BASE`, `ORS_API_KEY` |
+| Backend, Render | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `COOKIES_SECURE`, `MAIL_PROVIDER`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `RESET_LINK_BASE`, `BOOKING_LINK_BASE`, `ORS_API_KEY`, `REDIS_URL` |
 | Neon | none |
 | Brevo | none; it supplies the API key |
 | openrouteservice | none; it supplies the API key |
+| Upstash | none; it supplies the Redis URL |
+| MapTiler | none; it supplies the map key |
 
 Live URLs: frontend <https://screenbook.vercel.app>, API
 <https://cinebook-67pa.onrender.com>.
@@ -45,8 +47,9 @@ string and every request is relative.
 ## Frontend
 
 ```
-NEXT_PUBLIC_API_MODE   mock | live
-API_ORIGIN             where /api/* is forwarded, server-side only
+NEXT_PUBLIC_API_MODE      mock | live
+API_ORIGIN                where /api/* is forwarded, server-side only
+NEXT_PUBLIC_MAPTILER_KEY  MapTiler key for the globe and map tiles
 ```
 
 `mock` means MSW intercepts requests in the browser, no backend is involved, and
@@ -56,6 +59,7 @@ Local (`frontend/.env.local`, gitignored):
 
 ```
 NEXT_PUBLIC_API_MODE=live
+NEXT_PUBLIC_MAPTILER_KEY=<your key>
 ```
 
 `API_ORIGIN` falls back to `http://localhost:8082`, so local needs nothing else.
@@ -65,7 +69,12 @@ Vercel (Project Settings, Environment Variables):
 ```
 NEXT_PUBLIC_API_MODE=live
 API_ORIGIN=https://cinebook-67pa.onrender.com
+NEXT_PUBLIC_MAPTILER_KEY=<your key>
 ```
+
+**`NEXT_PUBLIC_MAPTILER_KEY` is also needed on Vercel**, or the map renders
+nothing. Like every `NEXT_PUBLIC_` value it ends up in the browser bundle, so
+the protection is MapTiler's allowed-origins setting on the key, not secrecy.
 
 **`API_ORIGIN` is not optional on Vercel.** Without it the rewrite forwards to
 `localhost:8082`, which on Vercel's edge is nothing at all, and every API call
@@ -97,6 +106,9 @@ Every variable, with the default it falls back to:
 | `RESET_LINK_BASE` | `http://localhost:3000/reset-password` | A **frontend** URL. The route the emailed link points at |
 | `BOOKING_LINK_BASE` | `http://localhost:3000/bookings` | A **frontend** URL. The booking confirmation email links to this plus the reference. Left at the default in production, the email points at localhost |
 | `ORS_API_KEY` | empty | Optional. Empty means `GET /api/cinemas/{id}/route` answers 503 and the client keeps its straight lines |
+| `REDIS_URL` | `redis://localhost:6379` | The Upstash `rediss://` URL on Render. A secret. Used by the route rate limiter only |
+| `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` | `health,info` | Local only, to switch on `metrics` and `prometheus` for the dashboard. Never on Render: the security chain permits every path, so an exposed endpoint is public |
+| `SCREENBOOK_ROUTING_BASE_URL` | the openrouteservice URL | Overridden only by the route-abuse load test, with a dummy key, so a provider call is refused at once and no quota is spent |
 
 ### Sending email
 
@@ -172,6 +184,14 @@ wake-up.
 so `docker compose up -d` starts it beside Postgres. On Render it will be the
 Upstash URL, set as a secret and never in a tracked file.
 
+On Render it is the Upstash URL. The free plan allows one database per account
+and 500,000 commands a month, and Upstash bills a script by what it runs: the
+`EVAL` plus one command for each `redis.call` inside it. The bucket script makes
+four calls, so every route cache miss costs five commands, refused ones
+included. What Upstash does once the monthly cap is reached has not been
+checked. If it refuses commands the limiter fails open, which would leave the
+provider quota unguarded for the rest of the month.
+
 Redis does one job: the token bucket in front of the route provider
 (`RateLimiter`, one Lua script, so the read, the refill and the take are one
 atomic step). The two numbers are
@@ -184,7 +204,9 @@ Four settings next to it each close a way this goes wrong.
 
 - **Redis timeouts are 250 ms**, for connecting and for commands. The limiter
   sits on the request path, so a Redis that hangs must cost a request a quarter
-  of a second, not a thread.
+  of a second, not a thread. If Render's logs ever show `Rate limiter
+  unavailable` while Upstash is up, a TLS handshake may be exceeding the connect
+  timeout. `SPRING_DATA_REDIS_CONNECT_TIMEOUT=1s` raises it with no code change.
 - **The limiter fails open.** If Redis cannot be reached the request goes
   through. The bucket protects a quota, and an outage of the thing protecting it
   should not take the feature down with it. Unset on Render, the default URL
@@ -399,3 +421,9 @@ intercepted above the app and the destination is the problem.
 Also delete `NEXT_PUBLIC_API_URL` from Vercel once `API_ORIGIN` is set. Nothing
 reads it any more, and leaving the right URL under a name nothing reads is how
 someone later concludes the API is configured when it is not.
+
+### Ingestion
+
+`TMDB_READ_TOKEN` is not read by the app or the frontend. Only
+`tools/tmdb_ingest.py` reads it, from the shell or from a `.env` at the repo
+root, which is gitignored.
