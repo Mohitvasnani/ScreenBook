@@ -432,7 +432,7 @@ a float.
 ## Running it
 
 ```bash
-docker compose up -d                 # PostgreSQL 18 on 5432
+docker compose up -d                 # PostgreSQL 18 on 5432, Redis on 6379
 
 cd backend && ./gradlew bootRun      # http://localhost:8082
 cd frontend && npm install && npm run dev   # http://localhost:3000
@@ -459,6 +459,39 @@ Integration tests run against a real PostgreSQL in a container, not an
 in-memory substitute, because the behaviour under test is a PostgreSQL row
 lock and an in-memory database would not have it. GitHub Actions runs the same
 suite on every push.
+
+## Observability
+
+Metrics come from Micrometer through Actuator. Prometheus and Grafana run
+locally behind a compose profile. They are not part of the deployed service.
+
+```bash
+docker compose --profile observability up -d     # Prometheus :9090, Grafana :3001
+
+# backend/, exposing the scrape endpoint for this run only
+MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics,prometheus ./gradlew bootRun
+```
+
+![Grafana dashboard during a route-abuse run and a hold-under-read-load run](docs/img/dashboard.png)
+
+One laptop, with k6 on the same machine, so the shape is the point and the
+numbers are not production figures. The left half is a route-abuse run against a
+provider that refuses at once: 30 requests spend the bucket and every request
+after that is a 429. The 30 allowed ones are invisible beside about 500 a second
+denied. The burst on the right is the hold-under-read-load run, which fills the
+connection pool.
+
+- **Production exposes `health` and `info` only.** The security chain ends in
+  `permitAll`, so anything exposed is public. A test reads the real property
+  file and asserts that Prometheus and the metrics endpoint are a 404.
+- **p95 comes from histogram buckets**, so Prometheus computes it and it stays
+  meaningful across instances.
+- **The limiter counts every decision by outcome and nothing else.** One tag
+  keeps the series count fixed. `unavailable` is the fail-open count, the signal
+  that the limiter has stopped protecting the quota.
+
+Each panel and the decision behind it are in
+[docs/observability.md](docs/observability.md).
 
 ## Deliberately out of scope
 
@@ -508,7 +541,6 @@ either half alone.
 - **Hexagonal refactor** with ArchUnit enforcing the module boundaries.
 - **Redis** is in for rate limiting on the route endpoint. A distributed lock
   is deliberately not planned: Postgres already fills that role.
-- **Prometheus and Grafana.** The load test is done, see `docs/load-test.md`.
 - **Kubernetes and Helm** on Oracle Cloud.
 
 ## Stack
@@ -521,6 +553,7 @@ either half alone.
 | Maps | MapLibre GL JS 6 (globe projection), MapTiler vector tiles and Countries, OpenStreetMap data |
 | Routing | openrouteservice (driving-car), behind the API, cached with Caffeine |
 | Rate limiting | Redis, a token bucket in one Lua script, in front of the routing provider |
+| Observability | Micrometer, Prometheus and Grafana, local only |
 | Testing | JUnit 5, Testcontainers |
 | Docs | springdoc-openapi, Swagger UI |
 | Mail | Brevo, behind a `Mailer` interface with a logging implementation |
