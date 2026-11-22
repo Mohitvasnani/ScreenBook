@@ -95,6 +95,45 @@ an absurd read rate for one screening and still left no measurable penalty on
 holds. The loaded runs were the faster ones, which is the order effect of
 warm-up and not a benefit of load. The finding is the absence of a cost.
 
+## Scenario D: the route endpoint under abuse
+
+`tools/load/route-abuse.js`. Twenty virtual users for 20 seconds, a random
+origin on every request so the route cache never answers. That is the worst case
+for the provider's quota: every request is a cache miss that would cost a
+provider call.
+
+**Before the limiter.** The API key was blank, so every request answered 503
+before any provider call: 47,741 requests, 2,369 req/s, all 503, p95 13 ms.
+Every origin was different, so with a real key each of those would have spent
+quota. The free plan allows 2,000 a day, which at this rate is gone in under a
+second.
+
+**After.** A dummy key, and the provider base URL pointed at a closed local port,
+so a provider call is refused at once and no real quota is spent. Redis in
+Docker, bucket capacity 30, refill 0.02 a second.
+
+| run | bucket at start | 503 (reached the provider call) | 429 | req/s | p95 |
+|---|---|---|---|---|---|
+| 1, cold JVM | full | 30 | 13,640 | 673 | 55 ms |
+| 2, warm | full | 30 | 32,335 | 1,563 | 18 ms |
+| 3, warm | left empty by run 2 | 0 | 33,754 | 1,685 | 16 ms |
+
+- Both full-bucket runs let exactly 30 requests through, which is the capacity.
+  Twenty seconds of refill adds about 0.4 of a token, so it does not show.
+- Run 3 did not reset the bucket. That shows it lives in Redis across runs: a
+  drained bucket stays drained, and nothing got through.
+- **The throughput is not comparable to the baseline.** Run 1 is a cold JVM,
+  which the setup notes already warn about. Warm, the endpoint does 1,563 to
+  1,685 req/s against 2,369. The gap is work the baseline skipped. A refused
+  request still reads the cinema row, because the unknown-cinema check runs
+  before the limiter, and then makes one Redis round trip. The limiter protects
+  the provider's quota, not Postgres.
+- What changed is the number of provider calls: unbounded before, 30 in a burst
+  and then one every 50 seconds now.
+
+The `Retry-After` header is covered by `RoutingRateLimitTest` and was not read
+off the running app in this run.
+
 ## What this decided
 
 - **Seat availability is not cached.** Reads interfere with holds only once read
@@ -107,6 +146,9 @@ warm-up and not a benefit of load. The finding is the absence of a cost.
   as durable as the booking it guards, and a cache cannot share a transaction
   with the booking.
 - **The pool stays at 10.** Doubling it was not measurably better.
+- **The route endpoint is rate limited with one global bucket.** The quota
+  belongs to the API key, so the bucket does too. Under 20 users sending only
+  cache misses, 30 requests reached the provider and the rest were refused.
 - **The route cache could not be judged yet.** Caffeine statistics were off, so
   there was no hit ratio. `recordStats` is now on and `cache.gets` is available.
 
@@ -114,10 +156,8 @@ warm-up and not a benefit of load. The finding is the absence of a cost.
 
 - A run against Render and Neon. Free-tier CPU and network would dominate it.
 - Booking confirmation under load, only holds.
-- The route endpoint with the rate limiter in front. The limiter is built and
-  tested, and `tools/load/route-abuse.js` has a baseline (no limiter, all 503
-  because the key was blank), but the before and after run against the limiter
-  has not been done yet.
+- The limiter against Upstash. Scenario D used a Redis container on the same
+  machine. A hosted Redis adds a network round trip to every cache miss.
 - More than one app instance.
 
 ## Reproduce
@@ -137,3 +177,16 @@ Remove-Item Env:READERS                                           # default is 5
 
 Pool pressure while a run is going:
 `/actuator/metrics/hikaricp.connections.active` and `.pending`.
+
+Route abuse (Scenario D), with Redis from `docker compose up -d redis`:
+
+```powershell
+# app terminal, from backend/. A dummy key, and a provider that refuses at once.
+$env:ORS_API_KEY = "dummy"
+$env:SCREENBOOK_ROUTING_BASE_URL = "http://localhost:9"
+./gradlew bootRun
+
+# from the repo root. Empty the bucket before every run, it persists in Redis.
+docker exec screenbook-redis redis-cli DEL rl:routing:provider
+k6 run tools/load/route-abuse.js
+```
